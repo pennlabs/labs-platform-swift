@@ -27,7 +27,7 @@ public struct AnalyticsContextProvider<Content: View>: View {
 
 
 
-extension View {
+public extension View {
     func logViewAnalytics(subkey: String) -> some View {
         @Environment(\.labsAnalyticsPath) var path: String
         @EnvironmentObject var analytics: LabsAnalytics
