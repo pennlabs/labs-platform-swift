@@ -10,7 +10,7 @@ import SwiftUI
 @propertyWrapper
 public struct TrackLabsAnalytics: View {
     public var wrappedValue: any View
-    @Environment(\.labsAnalytics) var analytics: LabsAnalytics?
+    @EnvironmentObject var analytics: LabsAnalytics
     @Environment(\.labsAnalyticsPath) var path: String
     let subkey: String
     

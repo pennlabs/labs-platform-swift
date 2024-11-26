@@ -9,14 +9,16 @@ import Foundation
 
 class AnalyticsNetworkManager {
     let token: String
+    let pennkey: String
     let url: URL
     
-    init(token: String, url: URL) {
+    init(token: String, pennkey: String, url: URL) {
         self.token = token
+        self.pennkey = pennkey
         self.url = url
     }
     
-    func submit(_ txn: AnalyticsTxn) async -> Result<Any?, Error> {
+    private func submit(_ txn: AnalyticsTxn, completion: @Sendable @escaping (Result<Any?, Error>) -> Void){
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -24,22 +26,27 @@ class AnalyticsNetworkManager {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         guard let txnJson = try? JSONEncoder().encode(txn) else {
-            return .failure(.invalidData)
+            completion(.failure(AnalyticsError.invalidData))
+            return
         }
         
         request.httpBody = txnJson
         
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            guard let httpResponse = response as? HTTPURLResponse, let data = data, httpResponse.statusCode == 200 else {
-                return .failure(.invalidResponse)
-            }
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
             
-            return .success(nil)
+            guard let httpResponse = response as? HTTPURLResponse, let data = data, httpResponse.statusCode == 200 else {
+                completion(.failure(AnalyticsError.invalidResponse))
+                return
+            }
+            completion(.success(nil))
         }
+        task.resume()
     }
     
-    
-    
+    public func submitValue(_ value: AnalyticsValue) {
+            submit(AnalyticsTxn(pennkey: pennkey, data: [value])) { _ in
+        }
+    }
 }
 
 public enum AnalyticsError: Error {

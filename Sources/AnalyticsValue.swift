@@ -5,7 +5,10 @@
 //  Created by Jonathan Melitski on 11/25/24.
 //
 
-struct AnalyticsValue: Codable, Equatable {
+import Foundation
+
+public struct AnalyticsValue: Codable, Equatable, Identifiable, Hashable, Sendable {
+    public let id = UUID()
     let key: String
     let value: Int
     let timestamp: Int

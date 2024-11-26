@@ -8,7 +8,7 @@
 import SwiftUI
 
 public struct AnalyticsContextProvider<Content: View>: View {
-    @Environment(\.labsAnalytics) var analytics: LabsAnalytics?
+    @EnvironmentObject var analytics: LabsAnalytics
     @Environment(\.labsAnalyticsPath) var path: String
 
     public var content: (AnalyticsContext) -> Content
@@ -30,16 +30,14 @@ public struct AnalyticsContextProvider<Content: View>: View {
 extension View {
     func logViewAnalytics(subkey: String) -> some View {
         @Environment(\.labsAnalyticsPath) var path: String
-        @Environment(\.labsAnalytics) var analytics: LabsAnalytics?
+        @EnvironmentObject var analytics: LabsAnalytics
         return (
             self
                 .onAppear {
-                    guard let analytics else { return }
-                    analytics.scheduleAnalyticsPost(AnalyticsValue(key: "\(path).\(subkey).open", value: 1, timestamp: Date.now))
+                    analytics.send(AnalyticsValue(key: "\(path).\(subkey).open", value: 1, timestamp: Date.now))
                 }
                 .onDisappear {
-                    guard let analytics else { return }
-                    analytics.scheduleAnalyticsPost(AnalyticsValue(key: "\(path).\(subkey).close", value: 1, timestamp: Date.now))
+                    analytics.send(AnalyticsValue(key: "\(path).\(subkey).close", value: 1, timestamp: Date.now))
                 }
         )
     }
