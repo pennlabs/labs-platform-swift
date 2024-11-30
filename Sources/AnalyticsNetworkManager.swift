@@ -7,10 +7,12 @@
 
 import Foundation
 
+
 class AnalyticsNetworkManager {
     let token: String
     let pennkey: String
     let url: URL
+    var queue: [AnalyticsValue] = []
     
     init(token: String, pennkey: String, url: URL) {
         self.token = token
@@ -18,34 +20,38 @@ class AnalyticsNetworkManager {
         self.url = url
     }
     
-    private func submit(_ txn: AnalyticsTxn, completion: @Sendable @escaping (Result<Any?, Error>) -> Void){
+    func submit() async throws -> Void {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "X-Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        let send = queue
+        let txn = AnalyticsTxn(pennkey: pennkey, data: queue)
+        
         guard let txnJson = try? JSONEncoder().encode(txn) else {
-            completion(.failure(AnalyticsError.invalidData))
-            return
+            throw AnalyticsError.invalidData
         }
+        
+        queue.removeAll()
         
         request.httpBody = txnJson
         
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
-            
-            guard let httpResponse = response as? HTTPURLResponse, let data = data, httpResponse.statusCode == 200 else {
-                completion(.failure(AnalyticsError.invalidResponse))
-                return
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                queue.append(contentsOf: send)
+                throw AnalyticsError.invalidResponse
             }
-            completion(.success(nil))
+        } catch {
+            queue.append(contentsOf: send)
+            throw error
         }
-        task.resume()
     }
     
-    public func submitValue(_ value: AnalyticsValue) {
-            submit(AnalyticsTxn(pennkey: pennkey, data: [value])) { _ in
-        }
+    func addValue(_ value: AnalyticsValue) {
+        queue.append(value)
     }
 }
 

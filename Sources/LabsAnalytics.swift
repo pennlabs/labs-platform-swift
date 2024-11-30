@@ -9,19 +9,32 @@ import Foundation
 
 public final class LabsAnalytics: ObservableObject {
     private let pennkey: String
-    let networkManager: AnalyticsNetworkManager
+    private let networkManager: AnalyticsNetworkManager
+    public let submitQueue: () async throws -> Void
     
-    
-    
-    public init(token: String, pennkey: String, url: URL) {
+    public init?(token: String, pennkey: String, url: URL) async {
         self.pennkey = pennkey
         
         networkManager = AnalyticsNetworkManager(token: token, pennkey: pennkey, url: url)
+        
+        do {
+            try await networkManager.submit()
+        } catch {
+            return nil
+        }
+        
+        submitQueue = networkManager.submit
     }
     
     
-    func send(_ value: AnalyticsValue) {
-        self.networkManager.submitValue(value)
+    
+    func record(_ value: AnalyticsValue) {
+        self.networkManager.addValue(value)
+    }
+    
+    func recordAndSubmit(_ value: AnalyticsValue) async throws {
+        record(value)
+        try await networkManager.submit()
     }
     
     

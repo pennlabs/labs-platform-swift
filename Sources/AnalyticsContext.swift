@@ -13,7 +13,7 @@ public struct AnalyticsContext {
     
     public func logEvent(event: String, value: Int = 1) {
         guard let analytics else { return }
-        analytics.send(AnalyticsValue(key: key, value: value, timestamp: Date.now))
+        analytics.record(AnalyticsValue(key: key, value: value, timestamp: Date.now))
     }
     
 }
