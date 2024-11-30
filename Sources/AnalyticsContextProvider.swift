@@ -24,21 +24,28 @@ public struct AnalyticsContextProvider<Content: View>: View {
     }
 }
 
-
-
-
 public extension View {
-    func logViewAnalytics(subkey: String) -> some View {
+    private func logViewAnalytics(subkey: String? = nil) -> some View {
         @Environment(\.labsAnalyticsPath) var path: String
         @EnvironmentObject var analytics: LabsAnalytics
+        let key = subkey == nil ? path : "\(path).\(subkey!)"
         return (
             self
                 .onAppear {
-                    analytics.send(AnalyticsValue(key: "\(path).\(subkey).open", value: 1, timestamp: Date.now))
+                    analytics.record(AnalyticsValue(key: "\(key).appear", value: 1, timestamp: Date.now))
                 }
                 .onDisappear {
-                    analytics.send(AnalyticsValue(key: "\(path).\(subkey).close", value: 1, timestamp: Date.now))
+                    analytics.record(AnalyticsValue(key: "\(key).disappear", value: 1, timestamp: Date.now))
                 }
         )
     }
+    
+    
+    func analytics(_ subkey: String?, logViewAppearances: Bool) -> some View {
+        @Environment(\.labsAnalyticsPath) var path: String
+        let key = subkey == nil ? path : "\(path).\(subkey!)"
+        let view = logViewAppearances ? self.logViewAnalytics(subkey: key) as! Self : self
+        
+        return view.environment(\.labsAnalyticsPath, key)
+        }
 }

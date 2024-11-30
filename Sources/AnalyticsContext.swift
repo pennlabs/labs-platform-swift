@@ -15,5 +15,4 @@ public struct AnalyticsContext {
         guard let analytics else { return }
         analytics.record(AnalyticsValue(key: key, value: value, timestamp: Date.now))
     }
-    
 }
