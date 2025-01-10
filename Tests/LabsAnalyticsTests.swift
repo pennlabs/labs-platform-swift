@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import LabsAnalytics
+@testable import LabsPlatformSwift
 
 final class LabsAnalyticsTests: XCTestCase {
 

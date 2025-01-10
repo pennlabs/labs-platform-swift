@@ -36,9 +36,4 @@ public final class LabsAnalytics: ObservableObject {
         record(value)
         try await networkManager.submit()
     }
-    
-    
-    
-    
-    
 }
