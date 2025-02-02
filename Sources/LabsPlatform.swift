@@ -74,7 +74,12 @@ struct PlatformProvider<Content: View>: View {
         content()
             .environmentObject(platform)
             .sheet(isPresented: showSheet) {
-                AuthWebView(platform: platform)
+                if case .newLogin(_,_) = platform.authState {
+                    AuthWebView(platform: platform)
+                } else {
+                    PlatformAuthLoadingView()
+                }
+                
             }
     }
 }

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 extension LabsPlatform {
     
@@ -40,6 +41,8 @@ extension LabsPlatform {
             print("OAuth state did not match! This could be a bug, or a sign of a highly sophisticated CSRF attack.")
             exit(1)
         }
+        
+        self.authState = .fetchingJwt(state: currentState, verifier: verifier)
         
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
@@ -89,6 +92,19 @@ extension LabsPlatform {
     }
 }
 
+struct PlatformAuthLoadingView: View {
+    var body: some View {
+        VStack(alignment: .center) {
+            Text("Penn Labs")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            Text("Loading your account details...")
+                .italic()
+            ProgressView()
+        }
+    }
+}
+
 
 struct PlatformAuthCredentials: Codable {
     let accessToken: String
@@ -101,13 +117,14 @@ struct PlatformAuthCredentials: Codable {
 enum PlatformAuthState {
     case loggedOut
     case newLogin(state: String, verifier: String)
+    case fetchingJwt(state: String, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
     
     var showWebViewSheet: Bool {
         switch self {
-        case .newLogin(_,_):
+        case .newLogin(_,_), .fetchingJwt(_, _):
             return true
         default:
             return false
