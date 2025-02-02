@@ -24,6 +24,11 @@ final class LabsAnalyticsTests: XCTestCase {
         // Any test you write for XCTest can be annotated as throws and async.
         // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
         // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
+        
+        let txn: AnalyticsTxn = AnalyticsTxn(pennkey: "melitski", data: [])
+        let val = try JSONEncoder().encode(txn)
+        let str = String(data: val, encoding: .utf8)
+        print("\(str)")
     }
 
     func testPerformanceExample() throws {

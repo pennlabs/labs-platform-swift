@@ -12,17 +12,13 @@ let package = Package(
             name: "LabsPlatformSwift",
             targets: ["LabsPlatformSwift"]),
     ],
-    dependencies: [
-            .package(url: "https://github.com/openid/AppAuth-iOS.git", from: "1.7.6"),
-    ],
+    dependencies: [],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "LabsPlatformSwift",
-            dependencies: [
-                .product(name: "AppAuth", package: "appauth-ios"),
-            ]
+            dependencies: []
         ),
         .testTarget(
             name: "LabsPlatformSwiftTests",

@@ -7,6 +7,29 @@
 
 import SwiftUI
 
+
+
+/*
+ 
+ 
+ var body: some View {
+ 
+    AnalyticsContextProvider { context in
+        Text("Hello")
+            .onTapGesture {
+                context.log("text")
+            }
+    }
+ 
+ 
+    DiningDetailView()
+        .analytics("commons")
+ 
+ }
+ 
+ 
+ */
+
 public struct AnalyticsContextProvider<Content: View>: View {
     @EnvironmentObject var analytics: LabsAnalytics
     @Environment(\.labsAnalyticsPath) var path: String
