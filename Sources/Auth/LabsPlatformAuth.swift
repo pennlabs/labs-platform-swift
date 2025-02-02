@@ -30,6 +30,12 @@ extension LabsPlatform {
     }
     
     func fetchToken(authCode: AuthCompletionResult) {
+        if case .newLogin(let currentState, _) = authState, currentState != authCode.state  {
+            authState = .loggedOut
+            print("OAuth state did not match! This could be a bug, or a sign of a highly sophisticated CSRF attack.")
+            exit(1)
+        }
+        
         //form post request
         
         //also cache
