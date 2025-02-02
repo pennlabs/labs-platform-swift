@@ -31,9 +31,13 @@ struct AuthWebView: View {
             AuthWebViewRepresentable(url: authUrl) { res in
                 switch res {
                 case .success(let authCode):
-                    platform.fetchToken(authCode: authCode)
+                    Task {
+                        await platform.fetchToken(authCode: authCode)
+                    }
+                    break
                 case .failure(let err):
                     platform.authState = .loggedOut
+                    break
                 }
             }
         }

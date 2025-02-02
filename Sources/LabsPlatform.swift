@@ -38,7 +38,7 @@ import UIKit
 
 // TODO: Another concern is that of concurrency when I go to add analytics. Should something be an actor here?
 
-
+@MainActor
 public final class LabsPlatform: ObservableObject {
     public static let authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
@@ -66,8 +66,9 @@ struct PlatformProvider<Content: View>: View {
 
     var body: some View {
         let showSheet = Binding { platform.authState.showWebViewSheet } set: { new in
-            // TODO: May need to change when I implement a guest mode
-            platform.authState = new ? platform.authState : .loggedOut
+            if platform.authState.showWebViewSheet {
+                platform.authState = new ? platform.authState : .loggedOut
+            }
         }
         
         content()

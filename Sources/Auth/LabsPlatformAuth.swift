@@ -34,7 +34,7 @@ extension LabsPlatform {
         }
     }
     
-    func fetchToken(authCode: AuthCompletionResult) {
+    func fetchToken(authCode: AuthCompletionResult) async {
         guard case .newLogin(let currentState, let verifier) = authState, currentState == authCode.state else {
             authState = .loggedOut
             print("OAuth state did not match! This could be a bug, or a sign of a highly sophisticated CSRF attack.")
@@ -47,8 +47,22 @@ extension LabsPlatform {
             "redirect_uri": self.redirectUrl.absoluteString,
             "client_id": self.clientId,
             "code_verifier": verifier,
-            "state": authCode.state
         ]
+        
+        guard case .success(let credentials) = await tokenPostRequest(parameters) else {
+            self.authState = .loggedOut
+            return
+        }
+        
+        self.authState = .loggedIn(auth: credentials)
+        
+        //form post request
+        
+        //also cache
+    }
+    
+    
+    func tokenPostRequest(_ parameters: [String:String]) async -> Result<PlatformAuthCredentials, any Error> {
         let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
         let postString = parameterArray.joined(separator: "&")
         
@@ -59,22 +73,19 @@ extension LabsPlatform {
         request.httpMethod = "POST"
         request.httpBody = postData
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-          guard let data = data else {
-            print(String(describing: error))
-            return
-          }
-          print(String(data: data, encoding: .utf8)!)
+        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
+            //return .success(PlatformAuthCredentials(accessToken: "", expiresIn: 0, tokenType: "", refreshToken: "", idToken: ""))
+            return .failure(CancellationError())
         }
-
-        task.resume()
-        //form post request
         
-        //also cache
+        let json = JSONDecoder()
+        json.keyDecodingStrategy = .convertFromSnakeCase
         
-        //TEMPORARY
-        authState = .loggedOut
-        print(authCode)
+        guard let data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
+            return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
+        }
+        
+        return .success(data)
     }
 }
 
