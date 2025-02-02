@@ -7,6 +7,8 @@
 
 import Foundation
 
+
+// TODO: Work this into the new LabsPlatform object
 public final class LabsAnalytics: ObservableObject {
     private let pennkey: String
     private let networkManager: AnalyticsNetworkManager

@@ -14,11 +14,11 @@ struct AuthWebView: View {
     
     @ObservedObject var platform: LabsPlatform
     
-    init(platform: LabsPlatform, challenge: String) {
+    init(platform: LabsPlatform) {
         self.platform = platform
-        if case .newLogin(let state) = platform.authState {
+        if case .newLogin(let state, let verifier) = platform.authState {
             self.url = URL(string:
-                        "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(challenge)&code_challenge_method=S256&client_id=\(platform.clientId)&redirect_uri=\(platform.redirectUrl.absoluteString)&scope=openid%20read&state=\(state)")
+                            "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(platform.clientId)&redirect_uri=\(platform.redirectUrl.absoluteString)&scope=openid%20read&state=\(state)")
         }
     }
     
