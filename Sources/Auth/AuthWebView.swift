@@ -8,6 +8,8 @@
 import SwiftUI
 import WebKit
 
+
+// TODO: This should probably be refactored
 struct AuthWebView: View {
     
     var url: URL?

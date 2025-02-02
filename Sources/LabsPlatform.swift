@@ -8,8 +8,6 @@
 import Foundation
 import SwiftUI
 import UIKit
-import CommonCrypto
-
 
 // TODO: Labs Platform should not be conditionally intialized, it should instead support a state that is non-logged in, whose functions (that require login) descriptively fail when in guest mode.
 
@@ -60,6 +58,11 @@ public final class LabsPlatform: ObservableObject {
 struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
     var content: () -> Content
+    
+    init(clientId: String, redirectUrl: URL, content: @escaping () -> Content) {
+        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
+        self.content = content
+    }
 
     var body: some View {
         let showSheet = Binding { platform.authState.showWebViewSheet } set: { new in
@@ -69,7 +72,6 @@ struct PlatformProvider<Content: View>: View {
         
         content()
             .environmentObject(platform)
-            .onTapGesture(perform: platform.beginLogin)
             .sheet(isPresented: showSheet) {
                 AuthWebView(platform: platform)
             }
@@ -78,14 +80,8 @@ struct PlatformProvider<Content: View>: View {
 
 public extension View {
     func enableLabsPlatform(clientId: String, redirectUrl: URL) -> some View {
-        return PlatformProvider(platform: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)) {
+        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl) {
             self
         }
     }
-}
-
-
-#Preview {
-    Text("Hello, World!")
-        .enableLabsPlatform(clientId: "REDACTED", redirectUrl: URL(string: "https://pennlabs.org/pennmobile/ios/callback/")!)
 }
