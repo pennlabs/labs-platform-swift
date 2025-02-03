@@ -77,7 +77,7 @@ extension LabsPlatform {
     
 }
 
-// MARK: Network Requests
+// MARK: Internal Network Requests
 extension LabsPlatform {
     func tokenPostRequest(_ parameters: [String:String]) async -> Result<PlatformAuthCredentials, any Error> {
         let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
