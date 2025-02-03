@@ -36,7 +36,7 @@ public enum PlatformError: Error {
     case notLoggedIn
 }
 
-public enum PlatformAuthMode {
-    case legacy
-    case jwt
+public enum PlatformAuthMode: Int, Sendable {
+    case legacy = 0
+    case jwt = 1
 }
