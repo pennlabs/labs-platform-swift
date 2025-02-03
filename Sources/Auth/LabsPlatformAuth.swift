@@ -53,7 +53,7 @@ extension LabsPlatform {
             return .loggedOut
         }
         
-        if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) > Date.now {
+        if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) < Date.now {
             return .needsRefresh(auth: credential)
         } else {
             return .loggedIn(auth: credential)
