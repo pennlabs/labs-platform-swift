@@ -43,6 +43,8 @@ public final class LabsPlatform: ObservableObject {
     public static let authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
     
+    public private(set) static var shared: LabsPlatform?
+    
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
     let redirectUrl: URL
@@ -52,6 +54,7 @@ public final class LabsPlatform: ObservableObject {
         self.clientId = clientId
         self.redirectUrl = redirectUrl
         self.authState = getCurrentAuthState()
+        LabsPlatform.shared = self
     }
     
 }
