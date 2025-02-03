@@ -51,6 +51,7 @@ public final class LabsPlatform: ObservableObject {
         // get initial state from cache
         self.clientId = clientId
         self.redirectUrl = redirectUrl
+        self.authState = getCurrentAuthState()
     }
     
 }

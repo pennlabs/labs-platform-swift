@@ -18,21 +18,8 @@ extension LabsPlatform {
         beginLogin()
     }
     
-    
     func beginLogin() {
-        switch authState {
-        case .loggedOut:
-            self.authState = .newLogin(state: AuthUtilities.stateString(), verifier: AuthUtilities.codeVerifier())
-            break
-        case .newLogin(_, _), .refreshing(_):
-            break
-        default:
-            break
-//        case .needsRefresh(auth: let auth):
-//            <#generate state#>
-//        case .loggedIn(auth: let auth):
-//            <#prompt logout?#>
-        }
+        self.authState = .newLogin(state: AuthUtilities.stateString(), verifier: AuthUtilities.codeVerifier())
     }
     
     func fetchToken(authCode: AuthCompletionResult) async {
@@ -58,13 +45,40 @@ extension LabsPlatform {
         }
         
         self.authState = .loggedIn(auth: credentials)
+        LabsKeychain.savePlatformCredential(credentials)
+    }
+    
+    func getCurrentAuthState() -> PlatformAuthState {
+        guard let credential = LabsKeychain.loadPlatformCredential() else {
+            return .loggedOut
+        }
         
-        //form post request
+        if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) > Date.now {
+            return .needsRefresh(auth: credential)
+        } else {
+            return .loggedIn(auth: credential)
+        }
+    }
+    
+    func getRefreshedAuthState() async -> PlatformAuthState {
+        if case .needsRefresh(let auth) = getCurrentAuthState() {
+            if case .success(let newCredential) = await tokenRefresh(auth) {
+                LabsKeychain.savePlatformCredential(newCredential)
+            } else {
+                LabsKeychain.clearPlatformCredential()
+            }
+            
+            return await getRefreshedAuthState()
+        }
         
-        //also cache
+        return getCurrentAuthState()
     }
     
     
+}
+
+// MARK: Network Requests
+extension LabsPlatform {
     func tokenPostRequest(_ parameters: [String:String]) async -> Result<PlatformAuthCredentials, any Error> {
         let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
         let postString = parameterArray.joined(separator: "&")
@@ -78,6 +92,36 @@ extension LabsPlatform {
 
         guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
             //return .success(PlatformAuthCredentials(accessToken: "", expiresIn: 0, tokenType: "", refreshToken: "", idToken: ""))
+            return .failure(CancellationError())
+        }
+        
+        let json = JSONDecoder()
+        json.keyDecodingStrategy = .convertFromSnakeCase
+        
+        guard let data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
+            return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
+        }
+        
+        return .success(data)
+    }
+    
+    func tokenRefresh(_ auth: PlatformAuthCredentials) async -> Result<PlatformAuthCredentials, any Error> {
+        let parameters: [String: String] = [
+            "grant_type": "refresh_token",
+            "refresh_token": auth.refreshToken,
+            "client_id": self.clientId
+        ]
+        let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
+        let postString = parameterArray.joined(separator: "&")
+        
+        let postData =  postString.data(using: .utf8)
+        
+        var request = URLRequest(url: LabsPlatform.tokenEndpoint)
+        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpMethod = "POST"
+        request.httpBody = postData
+        
+        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
             return .failure(CancellationError())
         }
         
@@ -112,6 +156,20 @@ struct PlatformAuthCredentials: Codable {
     let tokenType: String
     let refreshToken: String
     let idToken: String
+    let issuedAt: Date
+    
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.accessToken = try container.decode(String.self, forKey: .accessToken)
+        self.expiresIn = try container.decode(Int.self, forKey: .expiresIn)
+        self.tokenType = try container.decode(String.self, forKey: .tokenType)
+        self.refreshToken = try container.decode(String.self, forKey: .refreshToken)
+        self.idToken = try container.decode(String.self, forKey: .idToken)
+        
+        // IssuedAt time calculated this way because an auth credential can also be decoded from Keychain
+        // and doing so would cause the date to change. This way, we use the date in the struct unless it doesn't exist.
+        self.issuedAt = (try? container.decode(Date.self, forKey: .issuedAt)) ?? Date.now
+    }
 }
 
 enum PlatformAuthState {
