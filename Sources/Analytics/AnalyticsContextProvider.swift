@@ -29,7 +29,6 @@ import SwiftUI
  */
 
 public struct AnalyticsContextProvider<Content: View>: View {
-    @EnvironmentObject var analytics: LabsPlatform.Analytics
     @Environment(\.labsAnalyticsPath) var path: String
 
     public var content: (AnalyticsContext) -> Content
@@ -41,7 +40,7 @@ public struct AnalyticsContextProvider<Content: View>: View {
     }
 
     public var body: some View {
-        content(AnalyticsContext(analytics: analytics, key: "\(path).\(subkey)"))
+        content(AnalyticsContext(key: "\(path).\(subkey)"))
     }
 }
 
