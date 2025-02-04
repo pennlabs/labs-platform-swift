@@ -7,8 +7,7 @@
 
 import Foundation
 
-public struct AnalyticsValue: Codable, Equatable, Identifiable, Hashable, Sendable {
-    public let id = UUID()
+public struct AnalyticsValue: Codable, Equatable, Sendable {
     let key: String
     let value: Int
     let timestamp: Int

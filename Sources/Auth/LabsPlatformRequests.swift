@@ -30,6 +30,10 @@ public extension LabsPlatform {
         
         return newRequest
     }
+    
+    func authorizedURLRequest(url: URL, mode: PlatformAuthMode) async throws -> URLRequest {
+        return try await authorizedURLRequest(URLRequest(url: url), mode: mode)
+    }
 }
 
 public enum PlatformError: Error {
