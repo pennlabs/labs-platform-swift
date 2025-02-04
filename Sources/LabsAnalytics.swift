@@ -10,8 +10,8 @@ import Foundation
 
 // TODO: Work this into the new LabsPlatform object
 
-extension LabsPlatform {
-    actor Analytics: ObservableObject, Sendable {
+public extension LabsPlatform {
+    final actor Analytics: ObservableObject, Sendable {
         public static var endpoint: URL = URL(string: "https://platform.pennlabs.org/analytics/")!
         private var queue: [AnalyticsTxn] = []
         private var timer: Timer?
