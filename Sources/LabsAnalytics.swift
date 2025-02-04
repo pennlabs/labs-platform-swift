@@ -13,6 +13,8 @@ import Foundation
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
         public static var endpoint: URL = URL(string: "https://platform.pennlabs.org/analytics/")!
+        
+        public static var pushInterval: TimeInterval = 30
         private var queue: [AnalyticsTxn] = []
         private var timer: Timer?
 
@@ -24,9 +26,9 @@ public extension LabsPlatform {
         }
 
         private func startTimer() {
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            timer = Timer.scheduledTimer(withTimeInterval: LabsPlatform.Analytics.pushInterval, repeats: true) { _ in
                 Task {
-                    await self?.submitQueue()
+                    await self.submitQueue()
                 }
             }
         }
