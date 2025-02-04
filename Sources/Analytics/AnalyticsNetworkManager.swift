@@ -23,9 +23,9 @@ class AnalyticsNetworkManager {
     func submit() async throws -> Void {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "X-Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // TODO: Authenticate request
         
         let send = queue
         let txn = AnalyticsTxn(pennkey: pennkey, data: queue)

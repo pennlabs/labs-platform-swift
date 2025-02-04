@@ -44,6 +44,7 @@ public final class LabsPlatform: ObservableObject {
     public static let tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
     
     public private(set) static var shared: LabsPlatform?
+    @Published var analytics: Analytics
     
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
@@ -53,6 +54,7 @@ public final class LabsPlatform: ObservableObject {
         // get initial state from cache
         self.clientId = clientId
         self.redirectUrl = redirectUrl
+        self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
     }
@@ -76,7 +78,7 @@ struct PlatformProvider<Content: View>: View {
         }
         
         content()
-            .environmentObject(platform)
+            .environmentObject(platform.analytics)
             .sheet(isPresented: showSheet) {
                 if case .newLogin(_,_) = platform.authState {
                     AuthWebView(platform: platform)
@@ -98,7 +100,7 @@ public extension View {
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
     ///
-    /// - Returns: The original view with a `LabsPlatform` environment object.
+    /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform
     func enableLabsPlatform(clientId: String, redirectUrl: URL) -> some View {
         return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl) {

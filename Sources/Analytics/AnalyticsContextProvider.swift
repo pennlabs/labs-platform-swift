@@ -10,8 +10,7 @@ import SwiftUI
 
 
 /*
- 
- 
+  
  var body: some View {
  
     AnalyticsContextProvider { context in
@@ -27,11 +26,10 @@ import SwiftUI
  
  }
  
- 
  */
 
 public struct AnalyticsContextProvider<Content: View>: View {
-    @EnvironmentObject var analytics: LabsAnalytics
+    @EnvironmentObject var analytics: LabsPlatform.Analytics
     @Environment(\.labsAnalyticsPath) var path: String
 
     public var content: (AnalyticsContext) -> Content
@@ -50,7 +48,7 @@ public struct AnalyticsContextProvider<Content: View>: View {
 public extension View {
     private func logViewAnalytics(subkey: String? = nil) -> some View {
         @Environment(\.labsAnalyticsPath) var path: String
-        @EnvironmentObject var analytics: LabsAnalytics
+        @EnvironmentObject var analytics: LabsPlatform.Analytics
         let key = subkey == nil ? path : "\(path).\(subkey!)"
         return (
             self
