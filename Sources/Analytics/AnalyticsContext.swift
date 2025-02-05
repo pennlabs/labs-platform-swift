@@ -7,12 +7,15 @@
 
 import Foundation
 
+@MainActor
 public struct AnalyticsContext {
-    let analytics: LabsPlatform.Analytics?
+    let platform = LabsPlatform.shared
     let key: String
     
     public func logEvent(event: String, value: Int = 1) {
-        guard let analytics else { return }
-        analytics.record(AnalyticsValue(key: key, value: value, timestamp: Date.now))
+        Task {
+            guard let analytics = platform?.analytics else { return }
+            await analytics.record(AnalyticsValue(key: key, value: value, timestamp: Date.now))
+        }
     }
 }

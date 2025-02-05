@@ -35,7 +35,7 @@ struct AuthWebView: View {
                         await platform.fetchToken(authCode: authCode)
                     }
                     break
-                case .failure(let err):
+                case .failure(_):
                     platform.authState = .loggedOut
                     break
                 }

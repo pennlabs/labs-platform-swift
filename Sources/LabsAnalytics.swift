@@ -11,9 +11,11 @@ import Foundation
 // TODO: Work this into the new LabsPlatform object
 
 public extension LabsPlatform {
-    actor Analytics: ObservableObject {
+    final actor Analytics: ObservableObject, Sendable {
         public static var endpoint: URL = URL(string: "https://platform.pennlabs.org/analytics/")!
-        private var queue: [AnalyticsValue] = []
+        
+        public static var pushInterval: TimeInterval = 30
+        private var queue: [AnalyticsTxn] = []
         private var timer: Timer?
 
         init() {
@@ -24,23 +26,28 @@ public extension LabsPlatform {
         }
 
         private func startTimer() {
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            timer = Timer.scheduledTimer(withTimeInterval: LabsPlatform.Analytics.pushInterval, repeats: true) { _ in
                 Task {
-                    await self?.submitQueue()
+                    await self.submitQueue()
                 }
             }
         }
         
         
-        func record(_ value: AnalyticsValue) {
-            self.queue.append(value)
+        func record(_ value: AnalyticsValue) async {
+            
+            guard case .loggedIn(let auth) = await LabsPlatform.shared?.authState,
+                  let jwt = JWTUtilities.decodeJWT(auth.idToken),
+                  let pennkey: String = jwt["pennkey"] as? String else {
+                return
+            }
+            
+            self.queue.append(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
         }
         
         func recordAndSubmit(_ value: AnalyticsValue) async throws {
-            record(value)
-            Task {
-                await submitQueue()
-            }
+            await record(value)
+            await submitQueue()
         }
     }
 }
@@ -55,10 +62,10 @@ extension LabsPlatform.Analytics {
         queue.removeAll()
 
         await withTaskGroup(of: Void.self) { group in
-            for value in toSubmit {
+            for txn in toSubmit {
                 group.addTask {
-                    if !(await self.analyticsPostRequest(value)) {
-                        await self.record(value)
+                    if !(await self.analyticsPostRequest(txn)) {
+                        await self.record(txn.data.first!)
                     }
                 }
             }
@@ -70,7 +77,7 @@ extension LabsPlatform.Analytics {
     // another design decision: we're only collecting data from logged-in users here,
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
-    private func analyticsPostRequest(_ value: AnalyticsValue) async -> Bool {
+    private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
         guard let platform = await LabsPlatform.shared, var request = try? await platform.authorizedURLRequest(url: LabsPlatform.Analytics.endpoint, mode: .jwt) else {
             return false
         }
@@ -78,23 +85,16 @@ extension LabsPlatform.Analytics {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         
-        var json = JSONEncoder()
+        let json = JSONEncoder()
         json.keyEncodingStrategy = .convertToSnakeCase
-        
-        guard case .loggedIn(let auth) = await platform.authState,
-              let jwt = JWTUtilities.decodeJWT(auth.idToken),
-              let pennkey: String = jwt["pennkey"] as? String else {
-            return false
-        }
-        
-        let txn = AnalyticsTxn(pennkey: pennkey, data: [value])
+ 
         guard let data = try? json.encode(txn) else {
             return false
         }
         
         request.httpBody = data
        
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
               let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             return false
