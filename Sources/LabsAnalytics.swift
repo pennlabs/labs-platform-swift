@@ -32,11 +32,11 @@ public extension LabsPlatform {
         }
         
         
-        private func record(_ value: AnalyticsValue) {
+        func record(_ value: AnalyticsValue) {
             self.queue.append(value)
         }
         
-        private func recordAndSubmit(_ value: AnalyticsValue) async throws {
+        func recordAndSubmit(_ value: AnalyticsValue) async throws {
             record(value)
             Task {
                 await submitQueue()

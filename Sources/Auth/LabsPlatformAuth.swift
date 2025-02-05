@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import AuthenticationServices
 
 extension LabsPlatform {
     
@@ -15,11 +16,41 @@ extension LabsPlatform {
     ///
     /// - Tag: loginWithPlatform
     public func loginWithPlatform() {
-        beginLogin()
+        Task {
+            await beginLogin()
+        }
     }
     
-    func beginLogin() {
-        self.authState = .newLogin(state: AuthUtilities.stateString(), verifier: AuthUtilities.codeVerifier())
+    func beginLogin() async {
+        
+        let verifier: String = AuthUtilities.codeVerifier()
+        let state: String = AuthUtilities.stateString()
+        self.authState = .newLogin(state: state, verifier: verifier)
+        guard let url = URL(string:
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.redirectUrl.absoluteString)&scope=openid%20read&state=\(state)") else { return }
+        
+        do {
+            guard let callbackURL = try await self.session?.authenticate(using: url, callbackURLScheme: redirectUrl.absoluteString) else {
+                self.authState = .loggedOut
+                return
+            }
+            handleCallback(url: callbackURL)
+        } catch {
+            self.authState = .loggedOut
+        }
+    }
+    
+    func handleCallback(url: URL) {
+        guard let comps = URLComponents(string: url.absoluteString),
+              let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
+              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value else {
+            return
+        }
+        
+        Task {
+            await fetchToken(authCode: AuthCompletionResult(authCode: code, state: state))
+        }
+        
     }
     
     func fetchToken(authCode: AuthCompletionResult) async {
@@ -188,4 +219,9 @@ enum PlatformAuthState {
             return false
         }
     }
+}
+
+struct AuthCompletionResult {
+    let authCode: String
+    let state: String
 }

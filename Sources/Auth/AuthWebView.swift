@@ -96,7 +96,4 @@ struct AuthWebViewRepresentable: UIViewRepresentable {
     
 }
 
-struct AuthCompletionResult {
-    let authCode: String
-    let state: String
-}
+

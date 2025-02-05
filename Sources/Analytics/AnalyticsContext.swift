@@ -8,7 +8,7 @@
 import Foundation
 
 public struct AnalyticsContext {
-    let analytics: LabsAnalytics?
+    let analytics: LabsPlatform.Analytics?
     let key: String
     
     public func logEvent(event: String, value: Int = 1) {

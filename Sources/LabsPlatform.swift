@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import AuthenticationServices
 
 // TODO: Labs Platform should not be conditionally intialized, it should instead support a state that is non-logged in, whose functions (that require login) descriptively fail when in guest mode.
 
@@ -42,15 +43,17 @@ import UIKit
 public final class LabsPlatform: ObservableObject {
     public static let authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
-    
     public private(set) static var shared: LabsPlatform?
     @Published var analytics: Analytics
+    
+    var session: WebAuthenticationSession?
     
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
     let redirectUrl: URL
     
     public init(clientId: String, redirectUrl: URL) {
+        
         // get initial state from cache
         self.clientId = clientId
         self.redirectUrl = redirectUrl
@@ -63,11 +66,13 @@ public final class LabsPlatform: ObservableObject {
 
 struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
+    @Environment(\.webAuthenticationSession) var authenticationSession
     var content: () -> Content
     
     init(clientId: String, redirectUrl: URL, content: @escaping () -> Content) {
         self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
         self.content = content
+        
     }
 
     var body: some View {
@@ -78,6 +83,9 @@ struct PlatformProvider<Content: View>: View {
         }
         
         content()
+            .onAppear {
+                platform.session = authenticationSession
+            }
             .environmentObject(platform.analytics)
             .sheet(isPresented: showSheet) {
                 if case .newLogin(_,_) = platform.authState {
@@ -85,7 +93,6 @@ struct PlatformProvider<Content: View>: View {
                 } else {
                     PlatformAuthLoadingView()
                 }
-                
             }
     }
 }
