@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 
 
 // TODO: Work this into the new LabsPlatform object
@@ -16,9 +17,10 @@ public extension LabsPlatform {
         
         public static var pushInterval: TimeInterval = 30
         private var queue: [AnalyticsTxn] = []
-        private var timer: Timer?
+        private var timer: (any Cancellable)?
 
         init() {
+            
             Task {
                 await startTimer()
                 print("Analytics timer started.")
@@ -26,11 +28,14 @@ public extension LabsPlatform {
         }
 
         private func startTimer() {
-            timer = Timer.scheduledTimer(withTimeInterval: LabsPlatform.Analytics.pushInterval, repeats: true) { _ in
-                Task {
-                    await self.submitQueue()
+            timer = DispatchQueue
+                .global(qos: .utility)
+                .schedule(after: .init(.now()), interval: .seconds(LabsPlatform.Analytics.pushInterval), tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
+                    guard let self else { return }
+                    Task {
+                        await self.submitQueue()
+                    }
                 }
-            }
         }
         
         
