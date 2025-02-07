@@ -91,7 +91,6 @@ extension LabsPlatform {
         request.httpBody = postData
 
         guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            //return .success(PlatformAuthCredentials(accessToken: "", expiresIn: 0, tokenType: "", refreshToken: "", idToken: ""))
             return .failure(CancellationError())
         }
         
