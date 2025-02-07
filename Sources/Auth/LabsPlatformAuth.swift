@@ -27,10 +27,10 @@ extension LabsPlatform {
         let state: String = AuthUtilities.stateString()
         self.authState = .newLogin(state: state, verifier: verifier)
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.redirectUrl.absoluteString)&scope=openid%20read&state=\(state)") else { return }
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.callbackScheme)://\(LabsPlatform.callbackHost)&scope=openid%20read&state=\(state)") else { return }
         
         do {
-            guard let callbackURL = try await self.session?.authenticate(using: url, callbackURLScheme: redirectUrl.absoluteString) else {
+            guard let callbackURL = try await self.session?.authenticate(using: url, callbackURLScheme: LabsPlatform.callbackScheme) else {
                 self.authState = .loggedOut
                 return
             }
@@ -65,7 +65,7 @@ extension LabsPlatform {
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
             "code": authCode.authCode,
-            "redirect_uri": self.redirectUrl.absoluteString,
+            "redirect_uri": "\(LabsPlatform.callbackScheme)://\(LabsPlatform.callbackHost)",
             "client_id": self.clientId,
             "code_verifier": verifier,
         ]
