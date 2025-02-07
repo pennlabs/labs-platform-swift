@@ -67,7 +67,7 @@ public extension View {
     
     func analytics(_ subkey: String?, logViewAppearances: Bool) -> some View {
         @Environment(\.labsAnalyticsPath) var path: String
-        let key = subkey == nil ? path : "\(path).\(subkey!)"
+        let key: String = subkey == nil ? path : (path == "" ? (subkey!) : "\(path).\(subkey!)")
         let view = logViewAppearances ? self.logViewAnalytics(subkey: key) as! Self : self
         
         return view.environment(\.labsAnalyticsPath, key)
