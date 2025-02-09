@@ -13,11 +13,11 @@ import Combine
 
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
-        public static var endpoint: URL = URL(string: "https://platform.pennlabs.org/analytics/")!
+        public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics")!
         
         public static var pushInterval: TimeInterval = 30
         private var queue: [AnalyticsTxn] = []
-        private var timer: (any Cancellable)?
+        private var dispatch: (any Cancellable)?
 
         init() {
             
@@ -28,7 +28,7 @@ public extension LabsPlatform {
         }
 
         private func startTimer() {
-            timer = DispatchQueue
+                dispatch = DispatchQueue
                 .global(qos: .utility)
                 .schedule(after: .init(.now()), interval: .seconds(LabsPlatform.Analytics.pushInterval), tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
                     guard let self else { return }
@@ -99,7 +99,7 @@ extension LabsPlatform.Analytics {
         
         request.httpBody = data
        
-        guard let (_, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
               let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             return false
