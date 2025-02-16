@@ -19,12 +19,12 @@ public extension LabsPlatform {
         var newRequest = request
         switch mode {
         case .jwt:
-            newRequest.allHTTPHeaderFields?["Authorization"] = "\(auth.tokenType) \(auth.idToken)"
-            newRequest.allHTTPHeaderFields?["X-Authorization"] = "\(auth.tokenType) \(auth.idToken)"
+            newRequest.setValue("\(auth.tokenType) \(auth.idToken)", forHTTPHeaderField: "Authorization")
+            newRequest.setValue("\(auth.tokenType) \(auth.idToken)", forHTTPHeaderField: "X-Authorization")
             break
         case .legacy:
-            newRequest.allHTTPHeaderFields?["Authorization"] = "\(auth.tokenType) \(auth.accessToken)"
-            newRequest.allHTTPHeaderFields?["X-Authorization"] = "\(auth.tokenType) \(auth.accessToken)"
+            newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "Authorization")
+            newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "X-Authorization")
             break
         }
         

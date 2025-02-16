@@ -40,7 +40,7 @@ public struct AnalyticsContextProvider<Content: View>: View {
     }
 
     public var body: some View {
-        content(AnalyticsContext(key: "\(path).\(subkey)"))
+        content(AnalyticsContext(key: path != "" ? "\(path)." : "" + "\(subkey)"))
     }
 }
 

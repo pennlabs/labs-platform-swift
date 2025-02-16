@@ -15,7 +15,7 @@ public struct AnalyticsContext {
     public func logEvent(event: String, value: Int = 1) {
         Task {
             guard let analytics = platform?.analytics else { return }
-            await analytics.record(AnalyticsValue(key: key, value: value, timestamp: Date.now))
+            await analytics.record(AnalyticsValue(key: "\(key).event.\(event)", value: value, timestamp: Date.now))
         }
     }
 }
