@@ -7,7 +7,6 @@
 
 import Foundation
 import SwiftUI
-import AuthenticationServices
 
 extension LabsPlatform {
     
@@ -25,47 +24,35 @@ extension LabsPlatform {
         
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
-        self.authState = .newLogin(state: state, verifier: verifier)
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.callbackScheme)://\(LabsPlatform.callbackHost)&scope=openid%20read&state=\(state)") else { return }
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.callbackString)&scope=openid%20read&state=\(state)") else { return }
+        self.authState = .newLogin(url: url, redirect: LabsPlatform.callbackString, state: state, verifier: verifier)
         
-        do {
-            guard let callbackURL = try await self.session?.authenticate(using: url, callbackURLScheme: LabsPlatform.callbackScheme) else {
-                self.authState = .loggedOut
-                return
-            }
-            handleCallback(url: callbackURL)
-        } catch {
-            self.authState = .loggedOut
-        }
     }
     
-    func handleCallback(url: URL) {
-        guard let comps = URLComponents(string: url.absoluteString),
+    func handleCallback(callbackResult: Result<URL, any Error>) {
+        guard case .success(let url) = callbackResult,
+              case .newLogin(_,_,let currentState, let verifier) = self.authState,
+              let comps = URLComponents(string: url.absoluteString),
               let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
-              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value else {
+              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
+              currentState == state else {
+            self.authState = .loggedOut
             return
         }
         
         Task {
-            await fetchToken(authCode: AuthCompletionResult(authCode: code, state: state))
+            await fetchToken(authCode: code, state: currentState, verifier: verifier)
         }
         
     }
     
-    func fetchToken(authCode: AuthCompletionResult) async {
-        guard case .newLogin(let currentState, let verifier) = authState, currentState == authCode.state else {
-            authState = .loggedOut
-            print("OAuth state did not match! This could be a bug, or a sign of a highly sophisticated CSRF attack.")
-            exit(1)
-        }
-        
-        self.authState = .fetchingJwt(state: currentState, verifier: verifier)
-        
+    func fetchToken(authCode: String, state: String, verifier: String) async {
+        self.authState = .fetchingJwt(state: state, verifier: verifier)
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
-            "code": authCode.authCode,
-            "redirect_uri": "\(LabsPlatform.callbackScheme)://\(LabsPlatform.callbackHost)",
+            "code": authCode,
+            "redirect_uri": "\(LabsPlatform.callbackString)",
             "client_id": self.clientId,
             "code_verifier": verifier,
         ]
@@ -203,9 +190,9 @@ struct PlatformAuthCredentials: Codable {
     }
 }
 
-enum PlatformAuthState {
+enum PlatformAuthState: Sendable {
     case loggedOut
-    case newLogin(state: String, verifier: String)
+    case newLogin(url: URL, redirect: String, state: String, verifier: String)
     case fetchingJwt(state: String, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
@@ -213,7 +200,7 @@ enum PlatformAuthState {
     
     var showWebViewSheet: Bool {
         switch self {
-        case .newLogin(_,_), .fetchingJwt(_, _):
+        case .newLogin(_,_,_,_), .fetchingJwt(_, _):
             return true
         default:
             return false

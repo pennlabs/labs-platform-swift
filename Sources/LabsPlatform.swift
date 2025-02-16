@@ -8,7 +8,6 @@
 import Foundation
 import SwiftUI
 import UIKit
-import AuthenticationServices
 
 // TODO: Labs Platform should not be conditionally intialized, it should instead support a state that is non-logged in, whose functions (that require login) descriptively fail when in guest mode.
 
@@ -47,10 +46,11 @@ public final class LabsPlatform: ObservableObject {
     public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
     public static var callbackScheme: String = "platform"
     public static var callbackHost: String = "auth"
+    public static var callbackString: String {
+        return "\(callbackScheme)://\(callbackHost)"
+    }
     public private(set) static var shared: LabsPlatform?
     @Published var analytics: Analytics
-    
-    var session: WebAuthenticationSession?
     
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
@@ -68,7 +68,6 @@ public final class LabsPlatform: ObservableObject {
 
 struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
-    @Environment(\.webAuthenticationSession) var authenticationSession
     var content: () -> Content
     
     init(clientId: String, content: @escaping () -> Content) {
@@ -85,17 +84,14 @@ struct PlatformProvider<Content: View>: View {
         }
         
         content()
-            .onAppear {
-                platform.session = authenticationSession
-            }
             .environmentObject(platform.analytics)
-//            .sheet(isPresented: showSheet) {
-//                if case .newLogin(_,_) = platform.authState {
-//                    AuthWebView(platform: platform)
-//                } else {
-//                    PlatformAuthLoadingView()
-//                }
-//            }
+            .sheet(isPresented: showSheet) {
+                if case .newLogin(let url, let redirectStr, _, _) = platform.authState {
+                    AuthWebView(url: url, redirect: redirectStr, callback: platform.handleCallback)
+                } else {
+                    PlatformAuthLoadingView()
+                }
+            }
     }
 }
 
