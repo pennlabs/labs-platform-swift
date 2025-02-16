@@ -13,7 +13,7 @@ import Combine
 
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
-        public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics")!
+        public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
         
         public static var pushInterval: TimeInterval = 30
         private var queue: [AnalyticsTxn] = []
