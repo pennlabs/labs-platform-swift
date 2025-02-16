@@ -44,11 +44,7 @@ import UIKit
 public final class LabsPlatform: ObservableObject {
     public static var authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
-    public static var callbackScheme: String = "platform"
-    public static var callbackHost: String = "auth"
-    public static var callbackString: String {
-        return "\(callbackScheme)://\(callbackHost)"
-    }
+    public static var authRedirect: String = "https://pennlabs.org/pennmobile/ios/callback/"
     public private(set) static var shared: LabsPlatform?
     @Published var analytics: Analytics
     
@@ -86,8 +82,8 @@ struct PlatformProvider<Content: View>: View {
         content()
             .environmentObject(platform.analytics)
             .sheet(isPresented: showSheet) {
-                if case .newLogin(let url, let redirectStr, _, _) = platform.authState {
-                    AuthWebView(url: url, redirect: redirectStr, callback: platform.handleCallback)
+                if case .newLogin(let url, _, _) = platform.authState {
+                    AuthWebView(url: url, redirect: LabsPlatform.authRedirect, callback: platform.handleCallback)
                 } else {
                     PlatformAuthLoadingView()
                 }

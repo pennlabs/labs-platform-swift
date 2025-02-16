@@ -25,14 +25,14 @@ extension LabsPlatform {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.callbackString)&scope=openid%20read&state=\(state)") else { return }
-        self.authState = .newLogin(url: url, redirect: LabsPlatform.callbackString, state: state, verifier: verifier)
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.authRedirect)&scope=openid%20read&state=\(state)") else { return }
+        self.authState = .newLogin(url: url, state: state, verifier: verifier)
         
     }
     
     func handleCallback(callbackResult: Result<URL, any Error>) {
         guard case .success(let url) = callbackResult,
-              case .newLogin(_,_,let currentState, let verifier) = self.authState,
+              case .newLogin(_,let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString),
               let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
@@ -52,7 +52,7 @@ extension LabsPlatform {
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
             "code": authCode,
-            "redirect_uri": "\(LabsPlatform.callbackString)",
+            "redirect_uri": "\(LabsPlatform.authRedirect)",
             "client_id": self.clientId,
             "code_verifier": verifier,
         ]
@@ -192,7 +192,7 @@ struct PlatformAuthCredentials: Codable {
 
 enum PlatformAuthState: Sendable {
     case loggedOut
-    case newLogin(url: URL, redirect: String, state: String, verifier: String)
+    case newLogin(url: URL, state: String, verifier: String)
     case fetchingJwt(state: String, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
@@ -200,7 +200,7 @@ enum PlatformAuthState: Sendable {
     
     var showWebViewSheet: Bool {
         switch self {
-        case .newLogin(_,_,_,_), .fetchingJwt(_, _):
+        case .newLogin(_,_,_), .fetchingJwt(_, _):
             return true
         default:
             return false
