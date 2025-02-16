@@ -53,12 +53,12 @@ public extension View {
             self
                 .onAppear {
                     Task {
-                        await analytics.record(AnalyticsValue(key: "\(key).appear", value: 1, timestamp: Date.now))
+                        await analytics.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
                     }
                 }
                 .onDisappear {
                     Task {
-                        await analytics.record(AnalyticsValue(key: "\(key).disappear", value: 1, timestamp: Date.now))
+                        await analytics.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
                     }
                 }
         )

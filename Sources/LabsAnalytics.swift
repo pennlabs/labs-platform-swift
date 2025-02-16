@@ -29,7 +29,7 @@ public extension LabsPlatform {
 
         private func startTimer() {
                 dispatch = DispatchQueue
-                .global(qos: .utility)
+                .global(qos: .background)
                 .schedule(after: .init(.now()), interval: .seconds(LabsPlatform.Analytics.pushInterval), tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
                     guard let self else { return }
                     Task {

@@ -9,9 +9,9 @@ import Foundation
 
 public struct AnalyticsValue: Codable, Equatable, Sendable {
     let key: String
-    let value: Int
+    let value: String
 
-    init(key: String, value: Int, timestamp: Date) {
+    init(key: String, value: String, timestamp: Date) {
         self.key = key.replacingOccurrences(of: " ", with: "_")
         self.value = value
     }
