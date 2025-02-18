@@ -62,15 +62,11 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
     }
     
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-        guard let url: URL = webView.url, let comps = URLComponents(string: url.absoluteString) else {
+        guard let url: URL = webView.url else {
             return
         }
         
         if url.absoluteString.hasPrefix(redirect) {
-            guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value, let state = comps.queryItems?.first(where: {$0.name == "state"})?.value else {
-                callback(.failure(NSError(domain: "Invalid URL", code: 0, userInfo: nil)))
-                return
-            }
             callback(.success(url))
           }
       }

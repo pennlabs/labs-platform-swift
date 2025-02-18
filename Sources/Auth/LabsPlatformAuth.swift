@@ -25,7 +25,7 @@ extension LabsPlatform {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(LabsPlatform.authRedirect)&scope=openid%20read&state=\(state)") else { return }
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { return }
         self.authState = .newLogin(url: url, state: state, verifier: verifier)
         
     }
@@ -44,7 +44,6 @@ extension LabsPlatform {
         Task {
             await fetchToken(authCode: code, state: currentState, verifier: verifier)
         }
-        
     }
     
     func fetchToken(authCode: String, state: String, verifier: String) async {
@@ -52,7 +51,7 @@ extension LabsPlatform {
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
             "code": authCode,
-            "redirect_uri": "\(LabsPlatform.authRedirect)",
+            "redirect_uri": "\(self.authRedirect)",
             "client_id": self.clientId,
             "code_verifier": verifier,
         ]

@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct AnalyticsTxn: Codable {
+struct AnalyticsTxn: Codable, Equatable, Hashable {
     // Penn Mobile Product ID is 1 (from analytics spec)
     let product = 1
     let pennkey: String

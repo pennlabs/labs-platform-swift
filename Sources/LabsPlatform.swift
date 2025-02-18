@@ -37,24 +37,21 @@ import UIKit
 
 // pennlabs-platform://pennmobile/auth
 
-
-// TODO: Another concern is that of concurrency when I go to add analytics. Should something be an actor here?
-
 @MainActor
 public final class LabsPlatform: ObservableObject {
     public static var authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
-    public static var authRedirect: String = "https://pennlabs.org/pennmobile/ios/callback/"
+
     public private(set) static var shared: LabsPlatform?
     @Published var analytics: Analytics
-    
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
+    let authRedirect: String
     
-    public init(clientId: String) {
-        
+    public init(clientId: String, redirectUrl: URL) {
         // get initial state from cache
         self.clientId = clientId
+        self.authRedirect = redirectUrl.absoluteString
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
@@ -66,8 +63,8 @@ struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
     var content: () -> Content
     
-    init(clientId: String, content: @escaping () -> Content) {
-        self.platform = LabsPlatform(clientId: clientId)
+    init(clientId: String, redirectUrl: URL, content: @escaping () -> Content) {
+        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
         self.content = content
         
     }
@@ -83,7 +80,7 @@ struct PlatformProvider<Content: View>: View {
             .environmentObject(platform.analytics)
             .sheet(isPresented: showSheet) {
                 if case .newLogin(let url, _, _) = platform.authState {
-                    AuthWebView(url: url, redirect: LabsPlatform.authRedirect, callback: platform.handleCallback)
+                    AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.handleCallback)
                 } else {
                     PlatformAuthLoadingView()
                 }
@@ -103,8 +100,8 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform
-    func enableLabsPlatform(clientId: String) -> some View {
-        return PlatformProvider(clientId: clientId) {
+    func enableLabsPlatform(clientId: String, redirectUrl: URL) -> some View {
+        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl) {
             self
         }
     }

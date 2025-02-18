@@ -8,19 +8,23 @@
 import Foundation
 import Combine
 
-
-// TODO: Work this into the new LabsPlatform object
-
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
         public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
         
         public static var pushInterval: TimeInterval = 30
-        private var queue: [AnalyticsTxn] = []
+        private var queue: [AnalyticsTxn] = [] {
+            didSet {
+                // This needs to support App Groups in the future, so want to ensure
+                // that no data is lost or duplicated.
+                let current = UserDefaults.standard.object(forKey: "LabsAnalyticsQueue") as? [AnalyticsTxn] ?? []
+                queue = Array(Set(current + queue))
+                UserDefaults.standard.set(try? JSONEncoder().encode(queue), forKey: "LabsAnalyticsQueue")
+            }
+        }
         private var dispatch: (any Cancellable)?
 
         init() {
-            
             Task {
                 await startTimer()
                 print("Analytics timer started.")
@@ -28,9 +32,11 @@ public extension LabsPlatform {
         }
 
         private func startTimer() {
-                dispatch = DispatchQueue
-                .global(qos: .background)
-                .schedule(after: .init(.now()), interval: .seconds(LabsPlatform.Analytics.pushInterval), tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
+            dispatch = DispatchQueue
+                .global(qos: .utility)
+                .schedule(after: .init(.now()),
+                          interval: .seconds(LabsPlatform.Analytics.pushInterval),
+                          tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
                     guard let self else { return }
                     Task {
                         await self.submitQueue()
@@ -40,13 +46,11 @@ public extension LabsPlatform {
         
         
         func record(_ value: AnalyticsValue) async {
-            
             guard case .loggedIn(let auth) = await LabsPlatform.shared?.authState,
                   let jwt = JWTUtilities.decodeJWT(auth.idToken),
                   let pennkey: String = jwt["pennkey"] as? String else {
                 return
             }
-            
             self.queue.append(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
         }
         

@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct AnalyticsValue: Codable, Equatable, Sendable {
+public struct AnalyticsValue: Codable, Equatable, Sendable, Hashable {
     let key: String
     let value: String
 
