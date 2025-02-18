@@ -33,8 +33,19 @@ extension LabsPlatform {
     func handleCallback(callbackResult: Result<URL, any Error>) {
         guard case .success(let url) = callbackResult,
               case .newLogin(_,let currentState, let verifier) = self.authState,
-              let comps = URLComponents(string: url.absoluteString),
-              let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
+              let comps = URLComponents(string: url.absoluteString) else {
+            self.authState = .loggedOut
+            return
+        }
+        
+        if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
+           defaultLogin == "true" {
+            self.defaultLoginHandler?()
+            self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
+            return
+        }
+        
+        guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
             self.authState = .loggedOut
@@ -174,6 +185,15 @@ struct PlatformAuthCredentials: Codable {
     let idToken: String
     let issuedAt: Date
     
+    private init(accessToken: String, expiresIn: Int, tokenType: String, refreshToken: String, idToken: String, issuedAt: Date) {
+        self.tokenType = tokenType
+        self.idToken = idToken
+        self.accessToken = accessToken
+        self.expiresIn = expiresIn
+        self.issuedAt = issuedAt
+        self.refreshToken = refreshToken
+    }
+    
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.accessToken = try container.decode(String.self, forKey: .accessToken)
@@ -186,6 +206,18 @@ struct PlatformAuthCredentials: Codable {
         // and doing so would cause the date to change. This way, we use the date in the struct unless it doesn't exist.
         self.issuedAt = (try? container.decode(Date.self, forKey: .issuedAt)) ?? Date.now
     }
+    
+    static let defaultValue: PlatformAuthCredentials = .init(
+        accessToken: "",
+        expiresIn: Int.max,
+        tokenType: "",
+        refreshToken: "",
+        idToken: "",
+        issuedAt: Date.now
+    )
+    
+    
+    
 }
 
 enum PlatformAuthState: Sendable {

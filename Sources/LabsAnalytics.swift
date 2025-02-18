@@ -13,6 +13,7 @@ public extension LabsPlatform {
         public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
         
         public static var pushInterval: TimeInterval = 30
+        public static var expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
         private var queue: [AnalyticsTxn] = [] {
             didSet {
                 // This needs to support App Groups in the future, so want to ensure
@@ -25,6 +26,14 @@ public extension LabsPlatform {
         private var dispatch: (any Cancellable)?
 
         init() {
+            // queue will be assigned the value in userdefaults on the first submission, so we will expire old values
+            let oldQueue = UserDefaults.standard.object(forKey: "LabsAnalyticsQueue") as? [AnalyticsTxn] ?? []
+            let current = oldQueue.filter {
+                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < LabsPlatform.Analytics.expireInterval
+            }
+            UserDefaults.standard.set(try? JSONEncoder().encode(current), forKey: "LabsAnalyticsQueue")
+            
+            
             Task {
                 await startTimer()
                 print("Analytics timer started.")

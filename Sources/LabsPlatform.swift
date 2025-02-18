@@ -9,49 +9,25 @@ import Foundation
 import SwiftUI
 import UIKit
 
-// TODO: Labs Platform should not be conditionally intialized, it should instead support a state that is non-logged in, whose functions (that require login) descriptively fail when in guest mode.
-
-// TODO: As far as prompting a login goes, we know that LabsPlatform will exist in the environment of all its subviews. As a result, I've exposed a loginWithPlatform function (currently the exact same as the privately-implemented version, but could be different), and just say that guest mode is where this call does not take place.
-
-// TODO: Write real docs (without using TODO:)
-
-/*
- 
- View {
-    Subview()
- }
- .enableLabsPlatform(clientId: "...", redirectUrl: URL(...))
- 
--------- Subview.swift
- 
- @EnvironmentObject var platform: LabsPlatform
- 
- Text("Log in with Pennkey")
-    .onTapGesture {
-        platform.loginWithPlatform()
-    }
- 
---------
- 
- */
-
-// pennlabs-platform://pennmobile/auth
-
 @MainActor
 public final class LabsPlatform: ObservableObject {
     public static var authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
-
+    public static var defaultAccount = "root"
+    public static var defaultPassword = "root"
+    
     public private(set) static var shared: LabsPlatform?
+    
     @Published var analytics: Analytics
     @Published var authState: PlatformAuthState = .loggedOut
     let clientId: String
     let authRedirect: String
+    let defaultLoginHandler: (() -> ())?
     
-    public init(clientId: String, redirectUrl: URL) {
-        // get initial state from cache
+    public init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil) {
         self.clientId = clientId
-        self.authRedirect = redirectUrl.absoluteString
+        self.authRedirect = redirectUrl
+        self.defaultLoginHandler = defaultLoginHandler
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
@@ -63,8 +39,8 @@ struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
     var content: () -> Content
     
-    init(clientId: String, redirectUrl: URL, content: @escaping () -> Content) {
-        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
+    init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, content: @escaping () -> Content) {
+        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, defaultLoginHandler: defaultLoginHandler)
         self.content = content
         
     }
@@ -100,8 +76,8 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform
-    func enableLabsPlatform(clientId: String, redirectUrl: URL) -> some View {
-        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl) {
+    func enableLabsPlatform(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil) -> some View {
+        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, defaultLoginHandler: defaultLoginHandler) {
             self
         }
     }
