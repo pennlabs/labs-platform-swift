@@ -13,6 +13,7 @@ import UIKit
 public final class LabsPlatform: ObservableObject {
     public static var authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
     public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
+    public static var mobileBackendEndpoint = URL(string: "https://pennmobile.org/api/accounts/token/")!
     public static var defaultAccount = "root"
     public static var defaultPassword = "root"
     

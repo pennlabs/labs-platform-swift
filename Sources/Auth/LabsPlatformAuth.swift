@@ -52,6 +52,7 @@ extension LabsPlatform {
             return
         }
         
+        
         Task {
             await fetchToken(authCode: code, state: currentState, verifier: verifier)
         }
@@ -125,9 +126,11 @@ extension LabsPlatform {
         let json = JSONDecoder()
         json.keyDecodingStrategy = .convertFromSnakeCase
         
-        guard let data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
+        guard var data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
             return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
         }
+        
+        
         
         return .success(data)
     }
