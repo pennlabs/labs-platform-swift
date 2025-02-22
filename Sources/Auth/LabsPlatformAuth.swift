@@ -15,50 +15,50 @@ extension LabsPlatform {
     ///
     /// - Tag: loginWithPlatform
     public func loginWithPlatform() {
-        Task {
-            await beginLogin()
+        self.loginTask = Task {
+            do {
+                let (url, state, verifier) = try prepareLogin()
+                self.authState = .newLogin(url: url, state: state, verifier: verifier)
+                
+                let authResult = try fetchAccessCode()
+                self.authState = .fetchingJwt(state: state, verifier: verifier)
+                
+                let credential = try await fetchToken(authCode: authResult.authCode, state: state, verifier: verifier)
+                self.authState = .loggedIn(auth: credential)
+                LabsKeychain.savePlatformCredential(credential)
+            } catch {
+                self.authState = .loggedOut
+            }
         }
     }
     
-    func beginLogin() async {
-        
+// MARK: Top-level Auth Flow Functions
+    // (authURL, state, verifier)
+    func prepareLogin() throws -> (URL, String, String) {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { return }
-        self.authState = .newLogin(url: url, state: state, verifier: verifier)
-        
+                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { throw PlatformAuthError.invalidUrl }
+        return (url, state, verifier)
     }
     
-    func handleCallback(callbackResult: Result<URL, any Error>) {
-        guard case .success(let url) = callbackResult,
-              case .newLogin(_,let currentState, let verifier) = self.authState,
-              let comps = URLComponents(string: url.absoluteString) else {
-            self.authState = .loggedOut
-            return
+    func fetchAccessCode() throws -> AuthCompletionResult {
+        guard case .newLogin(let url, _, _) = self.authState else {
+            throw PlatformAuthError.illegalState
         }
-        
-        if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
-           defaultLogin == "true" {
-            self.defaultLoginHandler?()
-            self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
-            return
+        self.webViewUrl = url
+    
+        // Timeout login request after 2 minutes
+        let startTime = Date.now
+        while Date.now.timeIntervalSince(startTime) < 120 {
+            if case .codeAcquired(let code) = self.authState {
+                return code
+            }
         }
-        
-        guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
-              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
-              currentState == state else {
-            self.authState = .loggedOut
-            return
-        }
-        
-        Task {
-            await fetchToken(authCode: code, state: currentState, verifier: verifier)
-        }
+        throw PlatformAuthError.authTimeout
     }
     
-    func fetchToken(authCode: String, state: String, verifier: String) async {
-        self.authState = .fetchingJwt(state: state, verifier: verifier)
+    func fetchToken(authCode: String, state: String, verifier: String) async throws -> PlatformAuthCredentials {
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
             "code": authCode,
@@ -67,15 +67,57 @@ extension LabsPlatform {
             "code_verifier": verifier,
         ]
         
-        guard case .success(let credentials) = await tokenPostRequest(parameters) else {
-            self.authState = .loggedOut
+        let req = await tokenPostRequest(parameters)
+        if case .failure(let error) = req {
+            throw error
+        }
+        
+        guard case .success(let data) = req else {
+            throw PlatformAuthError.illegalState
+        }
+        
+        return data
+    }
+    
+    func cancelLogin() {
+        self.loginTask?.cancel()
+        self.loginTask = nil
+        self.authState = .loggedOut
+    }
+    
+    func completeDefaultLogin() {
+        self.loginTask?.cancel()
+        self.loginTask = nil
+        self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
+    }
+    
+// MARK: Other functions
+    func handleCallback(callbackResult: Result<URL, any Error>) {
+        guard case .success(let url) = callbackResult,
+              case .newLogin(_, let currentState, _) = self.authState,
+              let comps = URLComponents(string: url.absoluteString) else {
+            self.cancelLogin()
             return
         }
         
-        self.authState = .loggedIn(auth: credentials)
-        LabsKeychain.savePlatformCredential(credentials)
+        if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
+           defaultLogin == "true" {
+            self.defaultLoginHandler?()
+            self.completeDefaultLogin()
+            return
+        }
+        
+        guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
+              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
+              currentState == state else {
+            self.cancelLogin()
+            return
+        }
+        
+        self.authState = .codeAcquired(result: AuthCompletionResult(authCode: code, state: state))
     }
     
+// MARK: Setup + Refresh
     func getCurrentAuthState() -> PlatformAuthState {
         guard let credential = LabsKeychain.loadPlatformCredential() else {
             return .loggedOut
@@ -223,19 +265,19 @@ struct PlatformAuthCredentials: Codable {
 enum PlatformAuthState: Sendable {
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
+    case codeAcquired(result: AuthCompletionResult)
     case fetchingJwt(state: String, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
+}
+
+enum PlatformAuthError: Error {
+    case invalidUrl
+    case illegalState
+    case authTimeout
     
-    var showWebViewSheet: Bool {
-        switch self {
-        case .newLogin(_,_,_), .fetchingJwt(_, _):
-            return true
-        default:
-            return false
-        }
-    }
+    
 }
 
 struct AuthCompletionResult {

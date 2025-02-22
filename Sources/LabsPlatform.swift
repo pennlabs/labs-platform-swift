@@ -20,8 +20,10 @@ public final class LabsPlatform: ObservableObject {
     
     @Published var analytics: Analytics
     @Published var authState: PlatformAuthState = .loggedOut
+    @State var webViewUrl: URL?
     let clientId: String
     let authRedirect: String
+    var loginTask: Task<Void, Never>?
     let defaultLoginHandler: (() -> ())?
     
     public init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil) {
@@ -42,21 +44,20 @@ struct PlatformProvider<Content: View>: View {
     init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, content: @escaping () -> Content) {
         self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, defaultLoginHandler: defaultLoginHandler)
         self.content = content
-        
     }
 
     var body: some View {
-        let showSheet = Binding { platform.authState.showWebViewSheet } set: { new in
-            if platform.authState.showWebViewSheet {
-                platform.authState = new ? platform.authState : .loggedOut
+        let showSheet = Binding { platform.webViewUrl != nil } set: { new in
+            if platform.webViewUrl != nil && !new {
+                platform.cancelLogin()
             }
         }
         
         content()
-            .environmentObject(platform.analytics)
+            .environmentObject(platform)
             .sheet(isPresented: showSheet) {
-                if case .newLogin(let url, _, _) = platform.authState {
-                    AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.handleCallback)
+                if platform.webViewUrl != nil {
+                    AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.handleCallback)
                 } else {
                     PlatformAuthLoadingView()
                 }
@@ -73,6 +74,7 @@ public extension View {
     /// - Parameters:
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
+    ///     - defaultLoginHandler: A function that should be called when the login flow intercepts the default login credentials (user and password both "root", by default)
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform

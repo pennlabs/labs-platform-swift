@@ -13,6 +13,9 @@ final class LabsKeychain {
     static let labsAccount = "labs-platform"
     
     static func save(_ data: Data, service: String) {
+        #if targetEnvironment(simulator)
+            return
+        #else
         let query = [
             kSecValueData: data,
             kSecClass: kSecClassGenericPassword,
@@ -40,10 +43,13 @@ final class LabsKeychain {
 
                 SecItemUpdate(query, attributesToUpdate)
         }
+        #endif
     }
     
     static func read(service: String) -> Data? {
-        
+        #if targetEnvironment(simulator)
+            return nil
+        #else
         let query = [
             kSecAttrService: service,
             kSecAttrAccount: LabsKeychain.labsAccount,
@@ -55,10 +61,13 @@ final class LabsKeychain {
         SecItemCopyMatching(query, &result)
         
         return (result as? Data)
+        #endif
     }
     
     static func delete(service: String) {
-        
+        #if targetEnvironment(simulator)
+            return
+        #else
         let query = [
             kSecAttrService: service,
             kSecAttrAccount: LabsKeychain.labsAccount,
@@ -67,6 +76,7 @@ final class LabsKeychain {
         
         // Delete item from keychain
         SecItemDelete(query)
+        #endif
     }
 }
 
