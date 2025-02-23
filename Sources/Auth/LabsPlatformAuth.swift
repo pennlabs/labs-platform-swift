@@ -21,22 +21,25 @@ extension LabsPlatform {
         ]
         
         Task {
-            for phase in phases {
-                do {
+            do {
+                for phase in phases {
                     self.authState = try await phase()
-                    //                    if case .cancelled = self.authState {
-                    //                        break
-                    //                    }
-                } catch {
-                    self.authState = .loggedOut
-                    self.loginHandler(false)
+                    if case .cancelled = self.authState {
+                        break
+                    }
                 }
+            } catch {
+                self.authState = .loggedOut
             }
             
             if case .loggedIn(let credential) = self.authState {
                 LabsKeychain.savePlatformCredential(credential)
                 self.loginHandler(true)
+                return
             }
+            
+            self.authState = .loggedOut
+            self.loginHandler(false)
         }
     }
     
@@ -58,25 +61,26 @@ extension LabsPlatform {
             self.webViewUrl = url
         }
         
-        // Timeout login request after 2 minutes
-        let startTime = Date.now
-        
-        let taskLoop = Task {
-            while Date.now.timeIntervalSince(startTime) < 120 {
-                if case .codeAcquired(let code) = self.authState {
-                    return PlatformAuthState.fetchingJwt(code: code.authCode, state: state, verifier: verifier)
+        return try await withCheckedThrowingContinuation { continuation in
+            let startTime = Date.now
+            let dispatch = DispatchQueue.global(qos: .utility).schedule(after: .init(.now()), interval: .seconds(1), tolerance: .seconds(1)) {
+                if Date.now.timeIntervalSince(startTime) > 120 {
+                    dispatch.cancel()
+                    continuation.resume(throwing: PlatformAuthError.authTimeout)
+                    return
                 }
                 
-                // Default login case (handled in the completeDefaultLogin function)
+                if case .codeAcquired(let code) = self.authState {
+                    continuation.resume(returning: PlatformAuthState.fetchingJwt(code: code.authCode, state: state, verifier: verifier))
+                    return
+                }
+
                 if case .loggedIn(_) = self.authState {
-                    return self.authState
+                    continuation.resume(returning: self.authState)
+                    return
                 }
             }
-            throw PlatformAuthError.authTimeout
         }
-        
-        return try await taskLoop.value
-        
     }
     
     func fetchToken() async throws -> PlatformAuthState {
