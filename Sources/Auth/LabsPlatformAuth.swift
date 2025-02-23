@@ -9,74 +9,84 @@ import Foundation
 import SwiftUI
 
 extension LabsPlatform {
-    
     /// Handles the authentication flow with Platform.
     /// Defined in the scope of the `LabsPlatform` environment object created by [`View.enableLabsPlatform()`](x-source-tag://enableLabsPlatform)
     ///
     /// - Tag: loginWithPlatform
     public func loginWithPlatform() {
-        self.loginTask = Task {
-            await withTaskCancellationHandler {
-                do {
-                    let (url, state, verifier) = try prepareLogin()
-                    self.authState = .newLogin(url: url, state: state, verifier: verifier)
-                    
-                    let authResult = try fetchAccessCode()
-                    self.authState = .fetchingJwt(state: state, verifier: verifier)
-                    
-                    let credential = try await fetchToken(authCode: authResult.authCode, state: state, verifier: verifier)
-                    self.authState = .loggedIn(auth: credential)
-                    LabsKeychain.savePlatformCredential(credential)
-                    self.loginHandler(true)
-                } catch {
-                    self.loginTask?.cancel()
-                }
-            } onCancel: {
-                Task {
-                    await MainActor.run {
-                        self.authState = .loggedOut
-                        self.webViewUrl = nil
-                        self.loginHandler(false)
-                    }
-                }
-            }
-        }
+        let phases: [() async throws -> PlatformAuthState] = [
+            prepareLogin,
+            fetchAccessCode,
+            fetchToken
+        ]
         
         Task {
-            let _ = await loginTask!.result
+            for phase in phases {
+                do {
+                    self.authState = try await phase()
+                    //                    if case .cancelled = self.authState {
+                    //                        break
+                    //                    }
+                } catch {
+                    self.authState = .loggedOut
+                    self.loginHandler(false)
+                }
+            }
+            
+            if case .loggedIn(let credential) = self.authState {
+                LabsKeychain.savePlatformCredential(credential)
+                self.loginHandler(true)
+            }
         }
     }
     
 // MARK: Top-level Auth Flow Functions
-    // (authURL, state, verifier)
-    func prepareLogin() throws -> (URL, String, String) {
+    func prepareLogin() throws -> PlatformAuthState {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { throw PlatformAuthError.invalidUrl }
-        return (url, state, verifier)
+                                "\(LabsPlatform.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { throw PlatformAuthError.invalidUrl }
+        return .newLogin(url: url, state: state, verifier: verifier)
     }
     
-    func fetchAccessCode() throws -> AuthCompletionResult {
-        guard case .newLogin(let url, _, _) = self.authState else {
+    func fetchAccessCode() async throws -> PlatformAuthState {
+        guard case .newLogin(let url, let state, let verifier) = self.authState else {
             throw PlatformAuthError.illegalState
         }
-        self.webViewUrl = url
-    
+        
+        await MainActor.run {
+            self.webViewUrl = url
+        }
+        
         // Timeout login request after 2 minutes
         let startTime = Date.now
-        while Date.now.timeIntervalSince(startTime) < 120 {
-            if case .codeAcquired(let code) = self.authState {
-                return code
+        
+        let taskLoop = Task {
+            while Date.now.timeIntervalSince(startTime) < 120 {
+                if case .codeAcquired(let code) = self.authState {
+                    return PlatformAuthState.fetchingJwt(code: code.authCode, state: state, verifier: verifier)
+                }
+                
+                // Default login case (handled in the completeDefaultLogin function)
+                if case .loggedIn(_) = self.authState {
+                    return self.authState
+                }
             }
+            throw PlatformAuthError.authTimeout
         }
-        throw PlatformAuthError.authTimeout
+        
+        return try await taskLoop.value
+        
     }
     
-    func fetchToken(authCode: String, state: String, verifier: String) async throws -> PlatformAuthCredentials {
+    func fetchToken() async throws -> PlatformAuthState {
+        guard case .fetchingJwt(let code, _, let verifier) = self.authState else {
+            throw PlatformAuthError.illegalState
+        }
+        
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
-            "code": authCode,
+            "code": code,
             "redirect_uri": "\(self.authRedirect)",
             "client_id": self.clientId,
             "code_verifier": verifier,
@@ -91,18 +101,17 @@ extension LabsPlatform {
             throw PlatformAuthError.illegalState
         }
         
-        return data
+        return .loggedIn(auth: data)
     }
     
     func cancelLogin() {
-        self.loginTask?.cancel()
-        self.loginTask = nil
-        self.authState = .loggedOut
+        self.webViewUrl = nil
+        self.authState = .cancelled
     }
     
     func completeDefaultLogin() {
-        self.loginTask?.cancel()
-        self.loginTask = nil
+        self.webViewUrl = nil
+        self.defaultLoginHandler?()
         self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
     }
     
@@ -117,7 +126,6 @@ extension LabsPlatform {
         
         if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
            defaultLogin == "true" {
-            self.defaultLoginHandler?()
             self.completeDefaultLogin()
             return
         }
@@ -281,18 +289,17 @@ enum PlatformAuthState: Sendable {
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
     case codeAcquired(result: AuthCompletionResult)
-    case fetchingJwt(state: String, verifier: String)
+    case fetchingJwt(code: String, state: String, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
+    case cancelled
 }
 
 enum PlatformAuthError: Error {
     case invalidUrl
     case illegalState
     case authTimeout
-    
-    
 }
 
 struct AuthCompletionResult {

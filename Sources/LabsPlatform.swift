@@ -19,11 +19,11 @@ public final class LabsPlatform: ObservableObject {
     public private(set) static var shared: LabsPlatform?
     
     @Published var analytics: Analytics
-    @Published var authState: PlatformAuthState = .loggedOut
     @Published var webViewUrl: URL?
+    
+    var authState: PlatformAuthState = .loggedOut
     let clientId: String
     let authRedirect: String
-    var loginTask: Task<Void, Never>?
     let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
     
@@ -40,31 +40,30 @@ public final class LabsPlatform: ObservableObject {
 }
 
 struct PlatformProvider<Content: View>: View {
-    @ObservedObject var platform: LabsPlatform
-    var content: () -> Content
+    @StateObject var platform: LabsPlatform
+    @State var x = false
+    let content: Content
     
-    init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, content: @escaping () -> Content) {
-        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler)
-        self.content = content
+    init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler))
+        self.content = content()
     }
+    
 
     var body: some View {
-        let showSheet = Binding { platform.webViewUrl != nil } set: { new in
-            if platform.webViewUrl != nil && !new {
-                platform.cancelLogin()
+        content
+            .environmentObject(platform.analytics)
+            .sheet(item: $platform.webViewUrl, onDismiss: {
+                if platform.webViewUrl != nil {
+                    platform.cancelLogin()
+                }
+            }) { url in
+                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.handleCallback)
+            }
+            .onChange(of: platform.webViewUrl) {
+                print("URL assigned! \(platform.webViewUrl?.absoluteString)")
             }
         }
-        
-        content()
-            .environmentObject(platform)
-            .sheet(isPresented: showSheet) {
-                if platform.webViewUrl != nil {
-                    AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.handleCallback)
-                } else {
-                    PlatformAuthLoadingView()
-                }
-            }
-    }
 }
 
 public extension View {
@@ -80,9 +79,13 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform
-    func enableLabsPlatform(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil) -> some View {
-        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
+    @ViewBuilder func enableLabsPlatform(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
+        PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
             self
         }
     }
+}
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
