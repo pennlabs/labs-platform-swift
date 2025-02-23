@@ -62,35 +62,18 @@ extension LabsPlatform {
         }
         
         return try await withCheckedThrowingContinuation { continuation in
-            let startTime = Date.now
-            let dispatch = DispatchQueue.global(qos: .utility).schedule(after: .init(.now()), interval: .seconds(1), tolerance: .seconds(1)) {
-                if Date.now.timeIntervalSince(startTime) > 120 {
-                    dispatch.cancel()
-                    continuation.resume(throwing: PlatformAuthError.authTimeout)
-                    return
-                }
-                
-                if case .codeAcquired(let code) = self.authState {
-                    continuation.resume(returning: PlatformAuthState.fetchingJwt(code: code.authCode, state: state, verifier: verifier))
-                    return
-                }
-
-                if case .loggedIn(_) = self.authState {
-                    continuation.resume(returning: self.authState)
-                    return
-                }
-            }
+            self.webViewCheckedContinuation = continuation
         }
     }
     
     func fetchToken() async throws -> PlatformAuthState {
-        guard case .fetchingJwt(let code, _, let verifier) = self.authState else {
+        guard case .codeAcquired(let authCode, let verifier) = self.authState else {
             throw PlatformAuthError.illegalState
         }
         
         let parameters: [String: String] = [
             "grant_type": "authorization_code",
-            "code": code,
+            "code": authCode.authCode,
             "redirect_uri": "\(self.authRedirect)",
             "client_id": self.clientId,
             "code_verifier": verifier,
@@ -120,17 +103,19 @@ extension LabsPlatform {
     }
     
 // MARK: Other functions
-    func handleCallback(callbackResult: Result<URL, any Error>) {
+    func urlCallbackFunction(callbackResult: Result<URL, any Error>) {
         guard case .success(let url) = callbackResult,
-              case .newLogin(_, let currentState, _) = self.authState,
+              case .newLogin(_, let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString) else {
             self.cancelLogin()
+            self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
             return
         }
         
         if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
            defaultLogin == "true" {
             self.completeDefaultLogin()
+            self.webViewCheckedContinuation?.resume(returning: self.authState)
             return
         }
         
@@ -138,10 +123,13 @@ extension LabsPlatform {
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
             self.cancelLogin()
+            self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
             return
         }
         
-        self.authState = .codeAcquired(result: AuthCompletionResult(authCode: code, state: state))
+        self.webViewUrl = nil
+        self.webViewCheckedContinuation?.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
+        return
     }
     
 // MARK: Setup + Refresh
@@ -292,8 +280,7 @@ struct PlatformAuthCredentials: Codable {
 enum PlatformAuthState: Sendable {
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
-    case codeAcquired(result: AuthCompletionResult)
-    case fetchingJwt(code: String, state: String, verifier: String)
+    case codeAcquired(result: AuthCompletionResult, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
@@ -302,6 +289,7 @@ enum PlatformAuthState: Sendable {
 
 enum PlatformAuthError: Error {
     case invalidUrl
+    case invalidCallback
     case illegalState
     case authTimeout
 }

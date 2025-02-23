@@ -26,6 +26,8 @@ public final class LabsPlatform: ObservableObject {
     let authRedirect: String
     let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
+    var webViewCheckedContinuation: CheckedContinuation<PlatformAuthState, any Error>?
+    
     
     public init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil) {
         self.clientId = clientId
@@ -58,7 +60,7 @@ struct PlatformProvider<Content: View>: View {
                     platform.cancelLogin()
                 }
             }) { url in
-                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.handleCallback)
+                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
             .onChange(of: platform.webViewUrl) {
                 print("URL assigned! \(platform.webViewUrl?.absoluteString)")
