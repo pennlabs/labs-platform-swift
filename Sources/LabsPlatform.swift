@@ -20,15 +20,17 @@ public final class LabsPlatform: ObservableObject {
     
     @Published var analytics: Analytics
     @Published var authState: PlatformAuthState = .loggedOut
-    @State var webViewUrl: URL?
+    @Published var webViewUrl: URL?
     let clientId: String
     let authRedirect: String
     var loginTask: Task<Void, Never>?
+    let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
     
-    public init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil) {
+    public init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
+        self.loginHandler = loginHandler
         self.defaultLoginHandler = defaultLoginHandler
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
@@ -41,8 +43,8 @@ struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
     var content: () -> Content
     
-    init(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, content: @escaping () -> Content) {
-        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, defaultLoginHandler: defaultLoginHandler)
+    init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, content: @escaping () -> Content) {
+        self.platform = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler)
         self.content = content
     }
 
@@ -78,8 +80,8 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
     /// - Tag: enableLabsPlatform
-    func enableLabsPlatform(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil) -> some View {
-        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, defaultLoginHandler: defaultLoginHandler) {
+    func enableLabsPlatform(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil) -> some View {
+        return PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
             self
         }
     }

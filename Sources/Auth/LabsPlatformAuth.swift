@@ -16,19 +16,34 @@ extension LabsPlatform {
     /// - Tag: loginWithPlatform
     public func loginWithPlatform() {
         self.loginTask = Task {
-            do {
-                let (url, state, verifier) = try prepareLogin()
-                self.authState = .newLogin(url: url, state: state, verifier: verifier)
-                
-                let authResult = try fetchAccessCode()
-                self.authState = .fetchingJwt(state: state, verifier: verifier)
-                
-                let credential = try await fetchToken(authCode: authResult.authCode, state: state, verifier: verifier)
-                self.authState = .loggedIn(auth: credential)
-                LabsKeychain.savePlatformCredential(credential)
-            } catch {
-                self.authState = .loggedOut
+            await withTaskCancellationHandler {
+                do {
+                    let (url, state, verifier) = try prepareLogin()
+                    self.authState = .newLogin(url: url, state: state, verifier: verifier)
+                    
+                    let authResult = try fetchAccessCode()
+                    self.authState = .fetchingJwt(state: state, verifier: verifier)
+                    
+                    let credential = try await fetchToken(authCode: authResult.authCode, state: state, verifier: verifier)
+                    self.authState = .loggedIn(auth: credential)
+                    LabsKeychain.savePlatformCredential(credential)
+                    self.loginHandler(true)
+                } catch {
+                    self.loginTask?.cancel()
+                }
+            } onCancel: {
+                Task {
+                    await MainActor.run {
+                        self.authState = .loggedOut
+                        self.webViewUrl = nil
+                        self.loginHandler(false)
+                    }
+                }
             }
+        }
+        
+        Task {
+            let _ = await loginTask!.result
         }
     }
     
