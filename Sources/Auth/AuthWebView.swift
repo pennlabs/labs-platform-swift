@@ -25,13 +25,6 @@ struct AuthWebView: View {
     var body: some View {
         ZStack {
             AuthWebViewRepresentable(url: url, redirect: redirect, isLoading: $isLoading, completion: callback)
-            if isLoading {
-                ProgressView()
-                    .padding()
-                    .background(.ultraThickMaterial)
-                    .clipShape(.rect(cornerRadius: 8))
-            }
-            
         }
         
     }
@@ -64,13 +57,14 @@ struct AuthWebViewRepresentable: UIViewRepresentable {
     }
 }
 
-
+@MainActor
 class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
     let callback: (Result<URL, any Error>) -> ()
     let redirect: String
     @Binding var isLoading: Bool
     
-    private let loginScreen = "https://weblogin.pennkey.upenn.edu/idp/profile/SAML2/Redirect/SSO?execution=e1"
+    private let loginScreen = "https://weblogin.pennkey.upenn.edu/idp/profile/SAML2/Redirect/SSO"
+    private let mfaScreen = "https://api-ecae067e.duosecurity.com/frame/v4/auth"
     private let platformPermissionScreen = "https://platform.pennlabs.org/accounts/authorize/"
     
     init(redirect: String, isLoading: Binding<Bool>, callback: @escaping (Result<URL, any Error>) -> Void) {
@@ -84,7 +78,7 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
             return
         }
         
-        if url.absoluteString.hasPrefix(platformPermissionScreen) {
+        if url.absoluteString.hasPrefix(mfaScreen) {
             webView.isUserInteractionEnabled = true
             isLoading = false
         }
@@ -97,7 +91,7 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         let request = navigationAction.request
         guard let _ = request.url else {
             decisionHandler(.allow)
@@ -111,23 +105,20 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
                     webView.evaluateJavaScript("document.querySelector('input[name=j_password]').value;") { (result, _) in
                         if let password = result as? String {
                             if !pennkey.isEmpty && !password.isEmpty {
-                                print(pennkey)
-                                print(password)
-                                
                                 if pennkey == "root" && password == "root" {
                                     self.callback(.success(URL(string: "\(self.redirect)?defaultlogin=true")!))
-                                    decisionHandler(.cancel)
                                     return
                                 }
+                                // TODO: Store these details for autofill later.
+                                webView.isUserInteractionEnabled = false
+                                self.isLoading = true
                             }
                         }
                     }
                 }
             }
-            decisionHandler(.allow)
-            webView.isUserInteractionEnabled = false
-            isLoading = true
         }
+            decisionHandler(.allow)
     }
     
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {

@@ -21,7 +21,37 @@ public final class LabsPlatform: ObservableObject {
     @Published var analytics: Analytics
     @Published var webViewUrl: URL?
     
-    var authState: PlatformAuthState = .loggedOut
+    var authState: PlatformAuthState = .idle {
+        didSet {
+            switch authState {
+            case .loggedOut:
+                webViewUrl = nil
+                webViewCheckedContinuation = nil
+                
+                // Note, don't reset the stored analytics queue in UserDefaults, because they
+                // may log back in and we would want to submit them then (assuming
+                // the transactions haven't timed out)
+                LabsKeychain.clearPlatformCredential()
+                LabsKeychain.deletePennkey()
+                LabsKeychain.deletePassword()
+                
+                self.loginHandler(false)
+            case .loggedIn(auth: let auth):
+                self.webViewUrl = nil
+                self.webViewCheckedContinuation = nil
+                
+                LabsKeychain.savePlatformCredential(auth)
+                if auth == PlatformAuthCredentials.defaultValue {
+                    self.defaultLoginHandler?()
+                } else {
+                    self.loginHandler(true)
+                }
+            default:
+                break
+            }
+            
+        }
+    }
     let clientId: String
     let authRedirect: String
     let loginHandler: (Bool) -> ()
@@ -53,17 +83,36 @@ struct PlatformProvider<Content: View>: View {
     
 
     var body: some View {
+        let showSheet = Binding(get: { platform.webViewUrl != nil }) { new in
+            if platform.webViewUrl != nil && !new {
+                platform.cancelLogin()
+            }
+        }
+        
+        
         content
             .environmentObject(platform.analytics)
-            .sheet(item: $platform.webViewUrl, onDismiss: {
-                if platform.webViewUrl != nil {
-                    platform.cancelLogin()
+            .sheet(isPresented: showSheet) {
+                ZStack {
+                    HStack {
+                        Spacer()
+                        Text("PennKey Login")
+                            .bold()
+                            .padding(.vertical, 24)
+                            .padding(.horizontal)
+                        Spacer()
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Cancel") {
+                            platform.cancelLogin()
+                        }
+                        .padding(.vertical, 24)
+                        .padding(.horizontal)
+                    }
                 }
-            }) { url in
-                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
-            }
-            .onChange(of: platform.webViewUrl) {
-                print("URL assigned! \(platform.webViewUrl?.absoluteString)")
+                .background(.thickMaterial)
+                AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
         }
 }
@@ -78,8 +127,10 @@ public extension View {
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
     ///     - defaultLoginHandler: A function that should be called when the login flow intercepts the default login credentials (user and password both "root", by default)
+    ///     - loginHandler(loggedIn: Bool): a function that will be called whenever the Platform goes to either the logged-in state or the logged-out state. This includes
+    ///             uses of the [`LabsPlatform.logoutPlatform()`](x-source-tag://logoutPlatform) function (will always be `false`)
     ///
-    /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.instance`.
+    /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform
     @ViewBuilder func enableLabsPlatform(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
         PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {

@@ -17,14 +17,19 @@ extension LabsPlatform {
         let phases: [() async throws -> PlatformAuthState] = [
             prepareLogin,
             fetchAccessCode,
-            fetchToken
+            fetchToken,
         ]
         
         Task {
             do {
                 for phase in phases {
                     self.authState = try await phase()
-                    if case .cancelled = self.authState {
+                    if case .loggedOut = await self.authState {
+                        break
+                    }
+                    
+                    // Correctly handle default login
+                    if case .loggedIn(_) = await self.authState {
                         break
                     }
                 }
@@ -33,22 +38,29 @@ extension LabsPlatform {
             }
             
             if case .loggedIn(let credential) = self.authState {
-                LabsKeychain.savePlatformCredential(credential)
-                self.loginHandler(true)
                 return
+            } else {
+                self.authState = .loggedOut
             }
-            
-            self.authState = .loggedOut
-            self.loginHandler(false)
         }
     }
+    
+    /// Tells the client to log out of Platform and remove cached login credentials
+    /// and details (except for Analytic tokens, which will time out separately)
+    /// Will always run the `loginHandler` function with the boolean argument being `false`.
+    ///
+    /// - Tag: logoutPlatform
+    public func logoutPlatform() {
+        self.authState = .loggedOut
+    }
+    
     
 // MARK: Top-level Auth Flow Functions
     func prepareLogin() throws -> PlatformAuthState {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read&state=\(state)") else { throw PlatformAuthError.invalidUrl }
+                                "\(LabsPlatform.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read%20introspection&state=\(state)") else { throw PlatformAuthError.invalidUrl }
         return .newLogin(url: url, state: state, verifier: verifier)
     }
     
@@ -92,23 +104,27 @@ extension LabsPlatform {
     }
     
     func cancelLogin() {
-        self.webViewUrl = nil
-        self.authState = .cancelled
+        self.authState = .loggedOut
     }
     
     func completeDefaultLogin() {
-        self.webViewUrl = nil
-        self.defaultLoginHandler?()
         self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
     }
     
 // MARK: Other functions
     func urlCallbackFunction(callbackResult: Result<URL, any Error>) {
+        if case .loggedIn(_) = self.authState {
+            self.webViewCheckedContinuation?.resume(returning: self.authState)
+            self.webViewCheckedContinuation = nil
+            return
+        }
+        
         guard case .success(let url) = callbackResult,
               case .newLogin(_, let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString) else {
             self.cancelLogin()
             self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
+            self.webViewCheckedContinuation = nil
             return
         }
         
@@ -116,6 +132,7 @@ extension LabsPlatform {
            defaultLogin == "true" {
             self.completeDefaultLogin()
             self.webViewCheckedContinuation?.resume(returning: self.authState)
+            self.webViewCheckedContinuation = nil
             return
         }
         
@@ -124,19 +141,28 @@ extension LabsPlatform {
               currentState == state else {
             self.cancelLogin()
             self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
+            self.webViewCheckedContinuation = nil
             return
         }
         
         self.webViewUrl = nil
         self.webViewCheckedContinuation?.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
+        self.webViewCheckedContinuation = nil
         return
     }
     
 // MARK: Setup + Refresh
     func getCurrentAuthState() -> PlatformAuthState {
-        guard let credential = LabsKeychain.loadPlatformCredential() else {
-            return .loggedOut
+        let credential: PlatformAuthCredentials
+        if case .loggedIn(let cred) = self.authState {
+            credential = cred
+        } else if let cred = LabsKeychain.loadPlatformCredential() {
+                credential = cred
+        } else {
+                return .loggedOut
         }
+        
+        
         
         if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) < Date.now {
             return .needsRefresh(auth: credential)
@@ -146,11 +172,12 @@ extension LabsPlatform {
     }
     
     func getRefreshedAuthState() async -> PlatformAuthState {
-        if case .needsRefresh(let auth) = getCurrentAuthState() {
+        let state = getCurrentAuthState()
+        if case .needsRefresh(let auth) = state {
             if case .success(let newCredential) = await tokenRefresh(auth) {
                 LabsKeychain.savePlatformCredential(newCredential)
             } else {
-                LabsKeychain.clearPlatformCredential()
+                return state
             }
             
             return await getRefreshedAuthState()
@@ -234,12 +261,12 @@ struct PlatformAuthLoadingView: View {
 }
 
 
-struct PlatformAuthCredentials: Codable {
+struct PlatformAuthCredentials: Codable, Equatable {
     let accessToken: String
     let expiresIn: Int
     let tokenType: String
     let refreshToken: String
-    let idToken: String
+    let idToken: String?
     let issuedAt: Date
     
     private init(accessToken: String, expiresIn: Int, tokenType: String, refreshToken: String, idToken: String, issuedAt: Date) {
@@ -278,13 +305,13 @@ struct PlatformAuthCredentials: Codable {
 }
 
 enum PlatformAuthState: Sendable {
+    case idle
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
     case codeAcquired(result: AuthCompletionResult, verifier: String)
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
-    case cancelled
 }
 
 enum PlatformAuthError: Error {

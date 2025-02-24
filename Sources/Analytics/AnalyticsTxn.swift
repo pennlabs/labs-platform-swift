@@ -19,6 +19,4 @@ struct AnalyticsTxn: Codable, Equatable, Hashable {
         self.timestamp = Int(timestamp.timeIntervalSince1970)
         self.data = data
     }
-    
-    
 }

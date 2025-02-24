@@ -26,7 +26,7 @@ final class LabsKeychain {
         // Add data in query to keychain
         let status = SecItemAdd(query, nil)
         
-        if status != errSecSuccess {
+        if status != errSecSuccess && status != errSecDuplicateItem {
             // Print out the error
             print("Error: \(status)")
         }
@@ -105,4 +105,49 @@ extension LabsKeychain {
     static func hasPlatformCredential() -> Bool {
         return loadPlatformCredential() != nil
     }
+}
+
+// MARK: Pennkey Credential Storage
+extension LabsKeychain {
+    static func savePennkey(_ pennkey: String) {
+        guard let data = try? JSONEncoder().encode(pennkey) else {
+            return
+        }
+        
+        LabsKeychain.save(data, service: "pennkey-credentials-username")
+    }
+    
+    static func getPennkey() -> String? {
+        guard let data = LabsKeychain.read(service: "pennkey-credentials-username") else {
+            return nil
+        }
+        
+        return try? JSONDecoder().decode(String.self, from: data)
+    }
+    
+    static func savePassword(_ password: String) {
+        guard let data = try? JSONEncoder().encode(password) else {
+            return
+        }
+        
+        LabsKeychain.save(data, service: "pennkey-credentials-password")
+    }
+    
+    static func getPassword() -> String? {
+        guard let data = LabsKeychain.read(service: "pennkey-credentials-password") else {
+            return nil
+        }
+        
+        return try? JSONDecoder().decode(String.self, from: data)
+    }
+    
+    static func deletePennkey() {
+        LabsKeychain.delete(service: "pennkey-credentials-username")
+    }
+    
+    static func deletePassword() {
+        LabsKeychain.delete(service: "pennkey-credentials-password")
+    }
+    
+    
 }

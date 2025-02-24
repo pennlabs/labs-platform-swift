@@ -14,24 +14,20 @@ public extension LabsPlatform {
         
         public static var pushInterval: TimeInterval = 30
         public static var expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
-        private var queue: [AnalyticsTxn] = [] {
+        private var queue: Set<AnalyticsTxn> = [] {
             didSet {
-                // This needs to support App Groups in the future, so want to ensure
-                // that no data is lost or duplicated.
-                let current = UserDefaults.standard.object(forKey: "LabsAnalyticsQueue") as? [AnalyticsTxn] ?? []
-                queue = Array(Set(current + queue))
-                UserDefaults.standard.set(try? JSONEncoder().encode(queue), forKey: "LabsAnalyticsQueue")
+                UserDefaults.standard.setValue(try? JSONEncoder().encode(queue), forKey: "LabsAnalyticsQueue")
             }
         }
         private var dispatch: (any Cancellable)?
 
         init() {
             // queue will be assigned the value in userdefaults on the first submission, so we will expire old values
-            let oldQueue = UserDefaults.standard.object(forKey: "LabsAnalyticsQueue") as? [AnalyticsTxn] ?? []
-            let current = oldQueue.filter {
+            let data = UserDefaults.standard.data(forKey: "LabsAnalyticsQueue")
+            let oldQueue = (try? JSONDecoder().decode(Set<AnalyticsTxn>.self, from: data ?? Data())) ?? []
+            self.queue = oldQueue.filter {
                 return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < LabsPlatform.Analytics.expireInterval
             }
-            UserDefaults.standard.set(try? JSONEncoder().encode(current), forKey: "LabsAnalyticsQueue")
             
             
             Task {
@@ -56,11 +52,12 @@ public extension LabsPlatform {
         
         func record(_ value: AnalyticsValue) async {
             guard case .loggedIn(let auth) = await LabsPlatform.shared?.authState,
-                  let jwt = JWTUtilities.decodeJWT(auth.idToken),
+                  let id = auth.idToken,
+                  let jwt = JWTUtilities.decodeJWT(id),
                   let pennkey: String = jwt["pennkey"] as? String else {
                 return
             }
-            self.queue.append(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
+            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
         }
         
         func recordAndSubmit(_ value: AnalyticsValue) async throws {
@@ -96,7 +93,7 @@ extension LabsPlatform.Analytics {
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
     private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
-        guard let platform = await LabsPlatform.shared, var request = try? await platform.authorizedURLRequest(url: LabsPlatform.Analytics.endpoint, mode: .jwt) else {
+        guard var request = try? await URLRequest(url: LabsPlatform.Analytics.endpoint, mode: .jwt) else {
             return false
         }
         request.httpMethod = "POST"
