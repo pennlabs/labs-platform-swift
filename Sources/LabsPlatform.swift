@@ -67,8 +67,16 @@ public final class LabsPlatform: ObservableObject {
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
+        self.loginHandler(isLoggedIn())
     }
     
+    public func isLoggedIn() -> Bool {
+        if case .loggedOut = self.authState {
+            return false
+        } else {
+            return true
+        }
+    }
 }
 
 struct PlatformProvider<Content: View>: View {
@@ -116,7 +124,7 @@ struct PlatformProvider<Content: View>: View {
                 .background(.thickMaterial)
                 AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
-            .onChange(of: scenePhase) {
+            .onChange(of: scenePhase) { _ in
                 Task {
                     await platform.analytics.focusChanged(scenePhase)
                 }
