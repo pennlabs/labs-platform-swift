@@ -32,44 +32,60 @@ public struct AnalyticsContextProvider<Content: View>: View {
     @Environment(\.labsAnalyticsPath) var path: String
 
     public var content: (AnalyticsContext) -> Content
-    public let subkey: String
 
-    public init(subkey: String, @ViewBuilder content: @escaping (AnalyticsContext) -> Content) {
+    public init(@ViewBuilder content: @escaping (AnalyticsContext) -> Content) {
         self.content = content
-        self.subkey = subkey
     }
 
     public var body: some View {
-        content(AnalyticsContext(key: path != "" ? "\(path)." : "" + "\(subkey)"))
+        content(AnalyticsContext(key: path))
     }
 }
 
-public extension View {
-    private func logViewAnalytics(subkey: String? = nil) -> some View {
-        @Environment(\.labsAnalyticsPath) var path: String
-        @EnvironmentObject var analytics: LabsPlatform.Analytics
-        let key = subkey == nil ? path : "\(path).\(subkey!)"
-        return (
+extension View {
+    @ViewBuilder public func analytics(_ subkey: String?, logViewAppearances: Bool) -> some View {
+        AnalyticsView(subkey: subkey, logViewAppearances: logViewAppearances) {
             self
-                .onAppear {
-                    Task {
-                        await analytics.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
-                    }
-                }
-                .onDisappear {
-                    Task {
-                        await analytics.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
-                    }
-                }
-        )
+        }
+    }
+}
+
+private struct AnalyticsView<Content: View>: View {
+    @Environment(\.labsAnalyticsPath) var path: String
+    let content: Content
+    let logViewAppearances: Bool
+    let subkey: String?
+    @State var key: String = ""
+    let platform = LabsPlatform.shared
+    init(subkey: String?, logViewAppearances: Bool, @ViewBuilder _ content: () -> Content) {
+        self.content = content()
+        self.subkey = subkey
+        self.logViewAppearances = logViewAppearances
     }
     
-    
-    func analytics(_ subkey: String?, logViewAppearances: Bool) -> some View {
-        @Environment(\.labsAnalyticsPath) var path: String
-        let key = subkey == nil ? path : "\(path).\(subkey!)"
-        let view = logViewAppearances ? self.logViewAnalytics(subkey: key) as! Self : self
-        
-        return view.environment(\.labsAnalyticsPath, key)
+    var body: some View {
+        Group {
+            if logViewAppearances {
+                content
+                    .onAppear {
+                        guard let platform else { return }
+                        Task {
+                            await platform.analytics.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
+                        }
+                    }
+                    .onDisappear {
+                        guard let platform else { return }
+                        Task {
+                            await platform.analytics.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
+                        }
+                    }
+            } else {
+                content
+            }
         }
+        .environment(\.labsAnalyticsPath, key)
+        .onAppear {
+            self.key = subkey == nil ? path : "\(path).\(subkey!)"
+        }
+    }
 }

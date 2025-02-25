@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
@@ -19,6 +20,7 @@ public extension LabsPlatform {
                 UserDefaults.standard.setValue(try? JSONEncoder().encode(queue), forKey: "LabsAnalyticsQueue")
             }
         }
+        private var activeOperations: [AnalyticsTimedOperation] = []
         private var dispatch: (any Cancellable)?
 
         init() {
@@ -64,6 +66,37 @@ public extension LabsPlatform {
             await record(value)
             await submitQueue()
         }
+        
+        func addTimedOperation(_ operation: AnalyticsTimedOperation) {
+            self.activeOperations.append(operation)
+        }
+        
+        func completeTimedOperation(_ operation: AnalyticsTimedOperation) {
+            self.activeOperations.removeAll(where: {$0 == operation})
+            Task {
+                await record(await operation.finish())
+            }
+        }
+        
+        func getTimedOperation(_ fullKey: String) -> AnalyticsTimedOperation? {
+            return self.activeOperations.first(where: {$0.fullKey == fullKey})
+        }
+        
+        func focusChanged(_ phase: ScenePhase) {
+            let toCancel = self.activeOperations.filter({ op in
+                return op.cancelOnScenePhase.contains(where: {$0 == phase})
+            })
+            
+            toCancel.forEach({ op in
+                Task {
+                    await op.cancel()
+                }
+            })
+            
+            self.activeOperations.removeAll(where: { el in
+                toCancel.contains(where: {$0 == el})
+            })
+        }
     }
 }
 
@@ -98,7 +131,6 @@ extension LabsPlatform.Analytics {
         }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
         
         let json = JSONEncoder()
         json.keyEncodingStrategy = .convertToSnakeCase

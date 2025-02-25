@@ -73,11 +73,13 @@ public final class LabsPlatform: ObservableObject {
 
 struct PlatformProvider<Content: View>: View {
     @StateObject var platform: LabsPlatform
-    @State var x = false
+    @Environment(\.scenePhase) var scenePhase
     let content: Content
+    let analyticsRoot: String
     
-    init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
         self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler))
+        self.analyticsRoot = analyticsRoot
         self.content = content()
     }
     
@@ -91,7 +93,7 @@ struct PlatformProvider<Content: View>: View {
         
         
         content
-            .environmentObject(platform.analytics)
+            .environment(\.labsAnalyticsPath, analyticsRoot)
             .sheet(isPresented: showSheet) {
                 ZStack {
                     HStack {
@@ -114,6 +116,11 @@ struct PlatformProvider<Content: View>: View {
                 .background(.thickMaterial)
                 AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
+            .onChange(of: scenePhase) {
+                Task {
+                    await platform.analytics.focusChanged(scenePhase)
+                }
+            }
         }
 }
 
@@ -132,8 +139,8 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform
-    @ViewBuilder func enableLabsPlatform(clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
-        PlatformProvider(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
+    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
+        PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
             self
         }
     }
