@@ -304,7 +304,30 @@ struct PlatformAuthCredentials: Codable, Equatable {
     
 }
 
-enum PlatformAuthState: Sendable {
+enum PlatformAuthState: Equatable, CustomDebugStringConvertible, Sendable {
+    var debugDescription: String {
+        switch self {
+        case .idle:
+            "Idle"
+        case .loggedOut:
+            "Logged Out"
+        case .newLogin(url: let url, state: let state, verifier: let verifier):
+            "Starting new login"
+        case .codeAcquired(result: let result, verifier: let verifier):
+            "Acquired authorization code"
+        case .refreshing(state: let state):
+            "Refreshing access token"
+        case .needsRefresh(auth: let auth):
+            "Current access token expired, needs refresh"
+        case .loggedIn(auth: let auth):
+            "Logged in"
+        }
+    }
+    
+    static func == (lhs: PlatformAuthState, rhs: PlatformAuthState) -> Bool {
+        return lhs.debugDescription == rhs.debugDescription
+    }
+    
     case idle
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
@@ -312,6 +335,8 @@ enum PlatformAuthState: Sendable {
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
+    
+    
 }
 
 enum PlatformAuthError: Error {

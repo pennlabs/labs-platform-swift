@@ -7,8 +7,7 @@
 
 import Foundation
 
-@MainActor
-final class LabsKeychain {
+public final class LabsKeychain {
     
     static let labsAccount = "labs-platform"
     
@@ -98,7 +97,7 @@ extension LabsKeychain {
         return try? JSONDecoder().decode(PlatformAuthCredentials.self, from: data)
     }
     
-    static func clearPlatformCredential() {
+    public static func clearPlatformCredential() {
         LabsKeychain.delete(service: "auth-credentials")
     }
     
@@ -141,11 +140,11 @@ extension LabsKeychain {
         return try? JSONDecoder().decode(String.self, from: data)
     }
     
-    static func deletePennkey() {
+    public static func deletePennkey() {
         LabsKeychain.delete(service: "pennkey-credentials-username")
     }
     
-    static func deletePassword() {
+    public static func deletePassword() {
         LabsKeychain.delete(service: "pennkey-credentials-password")
     }
     
