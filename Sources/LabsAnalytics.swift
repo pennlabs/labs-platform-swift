@@ -17,7 +17,10 @@ public extension LabsPlatform {
         public static var expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
         private var queue: Set<AnalyticsTxn> = [] {
             didSet {
-                UserDefaults.standard.setValue(try? JSONEncoder().encode(queue), forKey: "LabsAnalyticsQueue")
+                let q = queue
+                DispatchQueue.main.async {
+                    UserDefaults.standard.setValue(try? JSONEncoder().encode(q), forKey: "LabsAnalyticsQueue")
+                }
             }
         }
         private var activeOperations: [AnalyticsTimedOperation] = []

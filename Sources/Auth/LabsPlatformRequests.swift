@@ -19,6 +19,37 @@ public extension URLRequest {
     }
 }
 
+/// Provides a `URLSession` with authenticated header fields depending on the `authenticationMode` (JWT or Legacy).
+public extension URLSession {
+    convenience init(authenticationMode: PlatformAuthMode, config: URLSessionConfiguration = .default) async throws {
+        guard let platform = await LabsPlatform.shared else {
+            throw PlatformError.platformNotEnabled
+        }
+        
+        let authState = await platform.getRefreshedAuthState()
+        guard case .loggedIn(let auth) = authState else {
+            throw PlatformError.notLoggedIn
+        }
+        if case .jwt = authenticationMode, auth.idToken == nil {
+            throw PlatformError.jwtNotFound
+        }
+        var configuration = config
+        switch authenticationMode {
+        case .jwt:
+            config.httpAdditionalHeaders = [
+                "Authorization": "\(auth.tokenType) \(auth.idToken!)",
+                "X-Authorization": "\(auth.tokenType) \(auth.idToken!)"
+            ]
+        case .accessToken:
+            config.httpAdditionalHeaders = [
+                "Authorization": "\(auth.tokenType) \(auth.accessToken)",
+                "X-Authorization": "\(auth.tokenType) \(auth.accessToken)"
+            ]
+        }
+        self.init(configuration: configuration)
+    }
+}
+
 extension LabsPlatform {
     
     /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
@@ -36,7 +67,7 @@ extension LabsPlatform {
             newRequest.setValue("\(auth.tokenType) \(auth.idToken!)", forHTTPHeaderField: "Authorization")
             newRequest.setValue("\(auth.tokenType) \(auth.idToken!)", forHTTPHeaderField: "X-Authorization")
             break
-        case .legacy:
+        case .accessToken:
             newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "Authorization")
             newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "X-Authorization")
             break
@@ -57,6 +88,6 @@ public enum PlatformError: Error {
 }
 
 public enum PlatformAuthMode: Int, Sendable {
-    case legacy = 0
+    case accessToken = 0
     case jwt = 1
 }

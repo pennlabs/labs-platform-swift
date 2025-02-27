@@ -10,11 +10,13 @@ import SwiftUI
 import Combine
 
 public extension Task where Success == Void, Failure == Never {
-    static func timedAnalyticsOperation(name: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive], _ operation: @escaping () async -> Void) async {
-        let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)", cancelOnScenePhase: cancelOnScenePhase)
-        await LabsPlatform.shared?.analytics.addTimedOperation(analytic)
-        await operation()
-        await LabsPlatform.shared?.analytics.completeTimedOperation(analytic)
+    static func timedAnalyticsOperation(name: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive], _ operation: @Sendable @escaping () async -> Void) {
+        Task {
+            let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)", cancelOnScenePhase: cancelOnScenePhase)
+            await LabsPlatform.shared?.analytics.addTimedOperation(analytic)
+            await operation()
+            await LabsPlatform.shared?.analytics.completeTimedOperation(analytic)
+        }
     }
 }
 
@@ -26,12 +28,12 @@ actor AnalyticsTimedOperation: Equatable, Identifiable {
     var time: Int = 0
     let fullKey: String
     let cancelOnScenePhase: [ScenePhase]
-    let startTime: DispatchTime
+    let startTime: UInt64
     
     init(fullKey: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive]) {
         self.fullKey = fullKey
         self.cancelOnScenePhase = cancelOnScenePhase
-        self.startTime = DispatchTime.now()
+        self.startTime = DispatchTime.now().uptimeNanoseconds
     }
     
     
@@ -39,11 +41,7 @@ actor AnalyticsTimedOperation: Equatable, Identifiable {
     
     func finish() -> AnalyticsValue {
         cancel()
-        let totalTime = startTime.distance(to: DispatchTime.now())
-        if case .nanoseconds(let nano) = totalTime {
-            return AnalyticsValue(key: fullKey, value: String(nano / 1000000), timestamp: Date.now)
-        } else {
-            return AnalyticsValue(key: fullKey, value: "undefined", timestamp: Date.now)
-        }
+        let totalTime = (DispatchTime.now().uptimeNanoseconds - startTime) / 1000000
+        return AnalyticsValue(key: fullKey, value: String(totalTime), timestamp: Date.now)
     }
 }
