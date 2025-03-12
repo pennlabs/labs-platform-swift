@@ -51,7 +51,13 @@ extension LabsPlatform {
     ///
     /// - Tag: logoutPlatform
     public func logoutPlatform() {
-        self.authState = .loggedOut
+        LabsKeychain.clearPlatformCredential()
+        LabsKeychain.deletePennkey()
+        LabsKeychain.deletePassword()
+        HTTPCookieStorage.shared.removeCookies(since: .distantPast)
+        DispatchQueue.main.async {
+            self.authState = .loggedOut
+        }
     }
     
     

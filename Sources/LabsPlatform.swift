@@ -20,63 +20,19 @@ public final class LabsPlatform: ObservableObject {
     
     @Published var analytics: Analytics
     @Published var webViewUrl: URL?
+    @Published var authState: PlatformAuthState = .idle
     
-    var authState: PlatformAuthState = .idle {
-        didSet {
-            if authState == oldValue {
-                return
-            }
-            switch authState {
-            case .loggedOut:
-                webViewUrl = nil
-                webViewCheckedContinuation = nil
-                
-                // Note, don't reset the stored analytics queue in UserDefaults, because they
-                // may log back in and we would want to submit them then (assuming
-                // the transactions haven't timed out)
-                LabsKeychain.clearPlatformCredential()
-                LabsKeychain.deletePennkey()
-                LabsKeychain.deletePassword()
-                Task { @MainActor in
-                    await self.loginHandler(false)
-                }
-                
-            case .loggedIn(auth: let auth):
-                self.webViewUrl = nil
-                self.webViewCheckedContinuation = nil
-                
-                LabsKeychain.savePlatformCredential(auth)
-                if auth == PlatformAuthCredentials.defaultValue {
-                    self.defaultLoginHandler?()
-                } else {
-                    Task { @MainActor in
-                        await self.loginHandler(true)
-                    }
-                }
-            default:
-                break
-            }
-            
-        }
-    }
     let clientId: String
     let authRedirect: String
-    let loginHandler: (Bool) async -> ()
-    let defaultLoginHandler: (() -> ())?
     var webViewCheckedContinuation: CheckedContinuation<PlatformAuthState, any Error>?
     
     
-    public init(clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil) {
+    public init(clientId: String, redirectUrl: String) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
-        self.loginHandler = loginHandler
-        self.defaultLoginHandler = defaultLoginHandler
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
-        Task { @MainActor in
-            await self.loginHandler(self.isLoggedIn)
-        }
     }
     
     public var isLoggedIn: Bool {
@@ -94,11 +50,15 @@ struct PlatformProvider<Content: View>: View {
     @Environment(\.scenePhase) var scenePhase
     let content: Content
     let analyticsRoot: String
+    let loginHandler: (Bool) async -> ()
+    let defaultLoginHandler: (() -> ())?
     
     init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler))
+        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl))
         self.analyticsRoot = analyticsRoot
         self.content = content()
+        self.loginHandler = loginHandler
+        self.defaultLoginHandler = defaultLoginHandler
     }
     
 
@@ -136,6 +96,45 @@ struct PlatformProvider<Content: View>: View {
             .onChange(of: scenePhase) { _ in
                 Task {
                     await platform.analytics.focusChanged(scenePhase)
+                }
+            }
+            .onChange(of: platform.authState) { oldValue, newValue in
+                if platform.authState == oldValue {
+                    return
+                }
+                platform.webViewUrl = nil
+                platform.webViewCheckedContinuation = nil
+                
+                var result = false
+                
+                switch platform.authState {
+                case .loggedOut:
+                    // Note, don't reset the stored analytics queue in UserDefaults, because they
+                    // may log back in and we would want to submit them then (assuming
+                    // the transactions haven't timed out)
+                    LabsKeychain.clearPlatformCredential()
+                    LabsKeychain.deletePennkey()
+                    LabsKeychain.deletePassword()
+                    
+                case .loggedIn(auth: let auth):
+                    LabsKeychain.savePlatformCredential(auth)
+                    if auth == PlatformAuthCredentials.defaultValue {
+                        self.defaultLoginHandler?()
+                    } else {
+                        result = true
+                    }
+                    
+                default:
+                    break
+                }
+                
+                Task {
+                    await self.loginHandler(result)
+                }
+            }
+            .onAppear {
+                Task {
+                    await self.loginHandler(platform.isLoggedIn)
                 }
             }
         }

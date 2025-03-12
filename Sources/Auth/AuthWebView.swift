@@ -92,33 +92,45 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        let request = navigationAction.request
-        guard let _ = request.url else {
-            decisionHandler(.allow)
-            return
-        }
-            
-        if navigationAction.navigationType == .formSubmitted,
-           webView.url?.absoluteString.contains(loginScreen) == true {
-            webView.evaluateJavaScript("document.querySelector('input[name=j_username]').value;") { (result, _) in
-                if let pennkey = result as? String {
-                    webView.evaluateJavaScript("document.querySelector('input[name=j_password]').value;") { (result, _) in
-                        if let password = result as? String {
-                            if !pennkey.isEmpty && !password.isEmpty {
-                                if pennkey == "root" && password == "root" {
-                                    self.callback(.success(URL(string: "\(self.redirect)?defaultlogin=true")!))
-                                    return
-                                }
-                                // TODO: Store these details for autofill later.
-                                webView.isUserInteractionEnabled = false
-                                self.isLoading = true
-                            }
-                        }
-                    }
-                }
+            let request = navigationAction.request
+            guard let _ = request.url else {
+                decisionHandler(.allow)
+                return
             }
-        }
-            decisionHandler(.allow)
+            
+            Task {
+                // Some Penn Mobile features require certain cookies given during the login process.
+                let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+                cookies.forEach { cookie in
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
+                
+                guard navigationAction.navigationType == .formSubmitted,
+                      webView.url?.absoluteString.contains(self.loginScreen) == true else {
+                    decisionHandler(.allow)
+                    return
+                }
+                
+                if let pennkey = try? await webView.evaluateJavaScript("document.querySelector('input[name=j_username]').value;") as? String,
+                   let password = try? await webView.evaluateJavaScript("document.querySelector('input[name=j_password]').value;") as? String,
+                   !(pennkey.isEmpty || password.isEmpty) {
+                    if pennkey == "root" && password == "root" {
+                        // Indicate the default login using a query parameter
+                        // This makes it so the default login is handled elsewhere
+                        self.callback(.success(URL(string: "\(self.redirect)?defaultlogin=true")!))
+                        // Might get rid of this
+                        decisionHandler(.allow)
+                        return
+                    }
+                    
+                    LabsKeychain.savePennkey(pennkey)
+                    LabsKeychain.savePassword(password)
+                    
+                    webView.isUserInteractionEnabled = false
+                    self.isLoading = true
+                }
+                decisionHandler(.allow)
+            }
     }
     
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
