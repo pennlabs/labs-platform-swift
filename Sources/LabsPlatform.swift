@@ -21,6 +21,7 @@ public final class LabsPlatform: ObservableObject {
     @Published var analytics: Analytics
     @Published var webViewUrl: URL?
     @Published var authState: PlatformAuthState = .idle
+    @Published var showingNetworkUnavailableAlert = false
     
     let clientId: String
     let authRedirect: String
@@ -71,6 +72,9 @@ struct PlatformProvider<Content: View>: View {
         
         content
             .environment(\.labsAnalyticsPath, analyticsRoot)
+            .alert(isPresented: $platform.showingNetworkUnavailableAlert) {
+                Alert(title: Text("No Connection"), message: Text("Unable to connect to the Penn Labs Platform. Are you connected to the internet?"))
+            }
             .sheet(isPresented: showSheet) {
                 ZStack {
                     HStack {
@@ -94,18 +98,19 @@ struct PlatformProvider<Content: View>: View {
                 AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
             .onChange(of: scenePhase) { _ in
-                Task {
-                    await platform.analytics.focusChanged(scenePhase)
+                DispatchQueue.main.async {
+                    Task {
+                        await platform.analytics.focusChanged(scenePhase)
+                    }
                 }
             }
             .onChange(of: platform.authState) { oldValue, newValue in
                 if platform.authState == oldValue {
                     return
                 }
-                platform.webViewUrl = nil
-                platform.webViewCheckedContinuation = nil
                 
                 var result = false
+                var defaultLogin = false
                 
                 switch platform.authState {
                 case .loggedOut:
@@ -120,21 +125,34 @@ struct PlatformProvider<Content: View>: View {
                     LabsKeychain.savePlatformCredential(auth)
                     if auth == PlatformAuthCredentials.defaultValue {
                         self.defaultLoginHandler?()
+                        defaultLogin = true
                     } else {
                         result = true
                     }
                     
                 default:
-                    break
+                    // Do not run anything in the event that we are in the
+                    // middle of an auth flow
+                    return
                 }
                 
-                Task {
-                    await self.loginHandler(result)
+                platform.webViewUrl = nil
+                platform.webViewCheckedContinuation = nil
+                
+                if !defaultLogin {
+                    DispatchQueue.main.async {
+                        Task {
+                            await self.loginHandler(result)
+                        }
+                    }
                 }
+
             }
             .onAppear {
-                Task {
-                    await self.loginHandler(platform.isLoggedIn)
+                DispatchQueue.main.async {
+                    Task {
+                        await self.loginHandler(platform.isLoggedIn)
+                    }
                 }
             }
         }

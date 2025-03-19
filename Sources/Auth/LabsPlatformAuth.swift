@@ -21,6 +21,15 @@ extension LabsPlatform {
         ]
         
         Task {
+            // Hit the login URL to check for network status
+            // will throw if no network (or if Platform is down)
+            let request = URLRequest(url: URL(string: "https://platform.pennlabs.org/accounts/login/")!)
+            guard let (_,_) = try? await URLSession.shared.data(for: request) else {
+                self.authState = .loggedOut
+                self.showingNetworkUnavailableAlert = true
+                return
+            }
+            
             do {
                 for phase in phases {
                     self.authState = try await phase()
@@ -138,6 +147,13 @@ extension LabsPlatform {
            defaultLogin == "true" {
             self.completeDefaultLogin()
             self.webViewCheckedContinuation?.resume(returning: self.authState)
+            self.webViewCheckedContinuation = nil
+            return
+        }
+        
+        if let _ = comps.queryItems?.first(where: {$0.name == "error"})?.value {
+            self.cancelLogin()
+            self.webViewCheckedContinuation?.resume(returning: PlatformAuthState.loggedOut)
             self.webViewCheckedContinuation = nil
             return
         }
