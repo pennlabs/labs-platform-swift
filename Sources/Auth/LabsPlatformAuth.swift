@@ -8,6 +8,9 @@
 import Foundation
 import SwiftUI
 
+
+
+// MARK: Platform Authentication
 extension LabsPlatform {
     /// Handles the authentication flow with Platform.
     /// Defined in the scope of the `LabsPlatform` environment object created by [`View.enableLabsPlatform()`](x-source-tag://enableLabsPlatform)
@@ -196,10 +199,24 @@ extension LabsPlatform {
     func getRefreshedAuthState() async -> PlatformAuthState {
         let state = getCurrentAuthState()
         if case .needsRefresh(let auth) = state {
-            if case .success(let newCredential) = await tokenRefresh(auth) {
+            switch await tokenRefresh(auth) {
+            case .success(let newCredential):
                 LabsKeychain.savePlatformCredential(newCredential)
-            } else {
-                return state
+                self.authState = .loggedIn(auth: newCredential)
+            case .failure(let error):
+                if let e = error as? PlatformAuthError {
+                    switch e.rawValue {
+                        // If the user has no connection, we can assume that their
+                        // Refresh is still valid, they just couldn't refresh
+                    case PlatformAuthError.noConnection.rawValue:
+                        return state
+                    default:
+                        return .loggedOut
+                    }
+                }
+                if let e = error as? DecodingError {
+                    return state
+                }
             }
             
             return await getRefreshedAuthState()
@@ -254,8 +271,12 @@ extension LabsPlatform {
         request.httpMethod = "POST"
         request.httpBody = postData
         
-        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            return .failure(CancellationError())
+        guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+            return .failure(PlatformAuthError.noConnection)
+        }
+        
+        guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
+            return .failure(PlatformAuthError.invalidSession)
         }
         
         let json = JSONDecoder()
@@ -269,6 +290,25 @@ extension LabsPlatform {
     }
 }
 
+// MARK: Platform Debug Options
+extension LabsPlatform {
+    public func debugForceRefresh() {
+        guard let token = LabsKeychain.loadPlatformCredential() else {
+            return
+        }
+        
+        let newToken = PlatformAuthCredentials(accessToken: token.accessToken,
+                                               expiresIn: token.expiresIn,
+                                               tokenType: token.tokenType,
+                                               refreshToken: token.refreshToken,
+                                               idToken: token.idToken,
+                                               issuedAt: Date.distantPast)
+        LabsKeychain.savePlatformCredential(newToken)
+        self.authState = .loggedIn(auth: newToken)
+    }
+}
+
+// MARK: Auth Models
 struct PlatformAuthLoadingView: View {
     var body: some View {
         VStack(alignment: .center) {
@@ -291,7 +331,7 @@ struct PlatformAuthCredentials: Codable, Equatable {
     let idToken: String?
     let issuedAt: Date
     
-    private init(accessToken: String, expiresIn: Int, tokenType: String, refreshToken: String, idToken: String, issuedAt: Date) {
+    init(accessToken: String, expiresIn: Int, tokenType: String, refreshToken: String, idToken: String?, issuedAt: Date) {
         self.tokenType = tokenType
         self.idToken = idToken
         self.accessToken = accessToken
@@ -306,7 +346,7 @@ struct PlatformAuthCredentials: Codable, Equatable {
         self.expiresIn = try container.decode(Int.self, forKey: .expiresIn)
         self.tokenType = try container.decode(String.self, forKey: .tokenType)
         self.refreshToken = try container.decode(String.self, forKey: .refreshToken)
-        self.idToken = try container.decode(String.self, forKey: .idToken)
+        self.idToken = try? container.decode(String.self, forKey: .idToken)
         
         // IssuedAt time calculated this way because an auth credential can also be decoded from Keychain
         // and doing so would cause the date to change. This way, we use the date in the struct unless it doesn't exist.
@@ -361,11 +401,13 @@ enum PlatformAuthState: Equatable, CustomDebugStringConvertible, Sendable {
     
 }
 
-enum PlatformAuthError: Error {
-    case invalidUrl
-    case invalidCallback
-    case illegalState
-    case authTimeout
+enum PlatformAuthError: Int, Error  {
+    case invalidUrl = 0
+    case invalidCallback = 1
+    case illegalState = 2
+    case authTimeout = 3
+    case invalidSession = 4
+    case noConnection = 5
 }
 
 struct AuthCompletionResult {

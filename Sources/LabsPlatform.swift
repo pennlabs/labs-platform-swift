@@ -70,7 +70,14 @@ struct PlatformProvider<Content: View>: View {
             }
         }
         
-        content
+        ZStack {
+            content
+//            Button {
+//                LabsPlatform.shared?.debugForceRefresh()
+//            } label: {
+//                Text("Force Refresh")
+//            }
+        }
             .environment(\.labsAnalyticsPath, analyticsRoot)
             .alert(isPresented: $platform.showingNetworkUnavailableAlert) {
                 Alert(title: Text("No Connection"), message: Text("Unable to connect to the Penn Labs Platform. Are you connected to the internet?"))
@@ -121,7 +128,7 @@ struct PlatformProvider<Content: View>: View {
                     LabsKeychain.deletePennkey()
                     LabsKeychain.deletePassword()
                     
-                case .loggedIn(auth: let auth):
+                case .loggedIn(auth: let auth), .needsRefresh(auth: let auth):
                     LabsKeychain.savePlatformCredential(auth)
                     if auth == PlatformAuthCredentials.defaultValue {
                         self.defaultLoginHandler?()
