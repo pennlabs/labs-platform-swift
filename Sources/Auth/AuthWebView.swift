@@ -101,6 +101,7 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
             Task {
                 // Some Penn Mobile features require certain cookies given during the login process.
                 let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+                UserDefaults.standard.savePlatformHTTPCookies(cookies)
                 cookies.forEach { cookie in
                     HTTPCookieStorage.shared.setCookie(cookie)
                 }
