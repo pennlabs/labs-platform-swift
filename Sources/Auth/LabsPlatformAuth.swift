@@ -20,7 +20,7 @@ extension LabsPlatform {
         let phases: [() async throws -> PlatformAuthState] = [
             prepareLogin,
             fetchAccessCode,
-            fetchToken,
+            fetchToken
         ]
         
         Task {
