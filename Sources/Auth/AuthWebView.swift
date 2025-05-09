@@ -25,18 +25,6 @@ struct AuthWebView: View {
     var body: some View {
         ZStack {
             AuthWebViewRepresentable(url: url, redirect: redirect, isLoading: $isLoading, completion: callback)
-            
-            if isLoading {
-                Color.black.opacity(0.1)
-                    .ignoresSafeArea()
-
-                ProgressView()
-                    .tint(nil)
-                    .scaleEffect(1.6)
-                    .frame(width: 100, height: 100)
-                    .background(.thickMaterial)
-                    .cornerRadius(16)
-            }
         }
     }
 }
