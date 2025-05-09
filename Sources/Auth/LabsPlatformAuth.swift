@@ -20,7 +20,7 @@ extension LabsPlatform {
         let phases: [() async throws -> PlatformAuthState] = [
             prepareLogin,
             fetchAccessCode,
-            fetchToken,
+            fetchToken
         ]
         
         Task {
@@ -66,6 +66,7 @@ extension LabsPlatform {
         LabsKeychain.clearPlatformCredential()
         LabsKeychain.deletePennkey()
         LabsKeychain.deletePassword()
+        UserDefaults.standard.clearPlatformHTTPCookies()
         HTTPCookieStorage.shared.removeCookies(since: .distantPast)
         DispatchQueue.main.async {
             self.authState = .loggedOut
@@ -354,10 +355,10 @@ struct PlatformAuthCredentials: Codable, Equatable {
     }
     
     static let defaultValue: PlatformAuthCredentials = .init(
-        accessToken: "",
-        expiresIn: Int.max,
-        tokenType: "",
-        refreshToken: "",
+        accessToken: "root",
+        expiresIn: 2592000, // 30 days
+        tokenType: "Bearer",
+        refreshToken: "123456789",
         idToken: "",
         issuedAt: Date.now
     )

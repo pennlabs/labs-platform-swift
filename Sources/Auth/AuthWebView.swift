@@ -25,8 +25,19 @@ struct AuthWebView: View {
     var body: some View {
         ZStack {
             AuthWebViewRepresentable(url: url, redirect: redirect, isLoading: $isLoading, completion: callback)
+            
+            if isLoading {
+                Color.black.opacity(0.1)
+                    .ignoresSafeArea()
+
+                ProgressView()
+                    .tint(nil)
+                    .scaleEffect(1.6)
+                    .frame(width: 100, height: 100)
+                    .background(.thickMaterial)
+                    .cornerRadius(16)
+            }
         }
-        
     }
 }
 
@@ -101,6 +112,7 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
             Task {
                 // Some Penn Mobile features require certain cookies given during the login process.
                 let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+                UserDefaults.standard.savePlatformHTTPCookies(cookies)
                 cookies.forEach { cookie in
                     HTTPCookieStorage.shared.setCookie(cookie)
                 }

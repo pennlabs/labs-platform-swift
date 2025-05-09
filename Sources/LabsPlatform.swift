@@ -34,6 +34,7 @@ public final class LabsPlatform: ObservableObject {
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
+        UserDefaults.standard.loadPlatformHTTPCookies()
     }
     
     public var isLoggedIn: Bool {
@@ -72,11 +73,6 @@ struct PlatformProvider<Content: View>: View {
         
         ZStack {
             content
-//            Button {
-//                LabsPlatform.shared?.debugForceRefresh()
-//            } label: {
-//                Text("Force Refresh")
-//            }
         }
             .environment(\.labsAnalyticsPath, analyticsRoot)
             .alert(isPresented: $platform.showingNetworkUnavailableAlert) {
