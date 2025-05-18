@@ -24,14 +24,17 @@ extension LabsPlatform {
         ]
         
         Task {
+            self.globalLoading = true
             // Hit the login URL to check for network status
             // will throw if no network (or if Platform is down)
             let request = URLRequest(url: URL(string: "https://platform.pennlabs.org/accounts/login/")!)
             guard let (_,_) = try? await URLSession.shared.data(for: request) else {
+                self.globalLoading = false
                 self.authState = .loggedOut
-                self.showingNetworkUnavailableAlert = true
+                self.alertText = "Unable to connect to the Penn Labs Platform. Are you connected to the internet?"
                 return
             }
+            self.globalLoading = false
             
             do {
                 for phase in phases {
@@ -159,6 +162,7 @@ extension LabsPlatform {
             self.cancelLogin()
             self.webViewCheckedContinuation?.resume(returning: PlatformAuthState.loggedOut)
             self.webViewCheckedContinuation = nil
+            self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
             return
         }
         

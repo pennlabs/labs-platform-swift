@@ -21,7 +21,8 @@ public final class LabsPlatform: ObservableObject {
     @Published var analytics: Analytics
     @Published var webViewUrl: URL?
     @Published var authState: PlatformAuthState = .idle
-    @Published var showingNetworkUnavailableAlert = false
+    @Published var alertText: String? = nil
+    @Published var globalLoading = false
     
     let clientId: String
     let authRedirect: String
@@ -71,12 +72,29 @@ struct PlatformProvider<Content: View>: View {
             }
         }
         
+        let showAlert = Binding(get: { platform.alertText != nil }) { new in
+            if platform.alertText != nil && !new {
+                platform.alertText = nil
+            }
+        }
+        
         ZStack {
             content
+            if platform.globalLoading {
+                Color.black.opacity(0.1)
+                    .ignoresSafeArea()
+
+                ProgressView()
+                    .tint(nil)
+                    .scaleEffect(1.6)
+                    .frame(width: 100, height: 100)
+                    .background(.thickMaterial)
+                    .cornerRadius(16)
+            }
         }
             .environment(\.labsAnalyticsPath, analyticsRoot)
-            .alert(isPresented: $platform.showingNetworkUnavailableAlert) {
-                Alert(title: Text("No Connection"), message: Text("Unable to connect to the Penn Labs Platform. Are you connected to the internet?"))
+            .alert(isPresented: showAlert) {
+                Alert(title: Text("Error"), message: Text(platform.alertText ?? "There was an error."))
             }
             .sheet(isPresented: showSheet) {
                 ZStack {
