@@ -68,10 +68,14 @@ This library works only for iOS >16.0 projects. Mac support may be added in the 
 1. Obtain a Client ID and Redirect URL from Penn Labs Platform.
 2. Add the package using the Swift Package Browser by clicking File>>Add Package Dependencies. Then paste the URL for this Github repository.
 
+### A Note About Client IDs
+Because this library demands OIDC support from the Penn Labs Platform, a client ID with OIDC enabled (use the `RSA` option in the Platform admin panel) is required. Otherwise, all login requests will fail.
+
 ## Setup
 
 1. With a new project, add the `.enableLabsPlatform` modifier to the root view. You will need to provide a few details.
-- `analyticsRoot: String`: The root keypath for analytics tokens. For example, in Penn Mobile, all analytics values will look like `pennmobile.{FEATURE}.{SUBFEATURE}`. In that case, the `analyticsRoot = "pennmobile"`
+- `analyticsRoot: String`: The root keypath for analytics tokens. For example, in Penn Mobile, all analytics values will look like `pennmobile.{FEATURE}.{SUBFEATURE}`. In that case, the `analyticsRoot = "pennmobile"`.
+    - I decided to not make analytics optional. This is because I wanted the analytics requests to be simple with very little room for failure. If analytics were optional, I would want all analytics functions to throw errors instead of silently failing, which would lead to additional complexity when calling these functions.
 - `clientId: String` and `redirectUrl: String`. These are issued by Platform.
 - `loginHandler: (Bool) async -> Void`: This function is run on startup and when the login state changes. The boolean argument is `true` when the user is logged in, `false` otherwise.
 - `defaultLoginHandler: () -> Void`: The App Store requires a default login for most apps (for App Store verification purposes). This function will run if the default login credentials are intercepted by the login WebView.
