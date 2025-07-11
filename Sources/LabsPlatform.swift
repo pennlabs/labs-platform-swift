@@ -40,7 +40,7 @@ public final class LabsPlatform: ObservableObject {
     
     public var isLoggedIn: Bool {
         switch self.authState {
-        case .loggedIn(_), .needsRefresh(_):
+        case .loggedIn(_), .needsRefresh(_), .refreshing(_):
             return true
         default:
             return false

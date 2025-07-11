@@ -214,7 +214,7 @@ extension LabsPlatform {
                         // If the user has no connection, we can assume that their
                         // Refresh is still valid, they just couldn't refresh
                     case PlatformAuthError.noConnection.rawValue:
-                        return state
+                        return .needsRefresh(auth: auth)
                     default:
                         return .loggedOut
                     }
