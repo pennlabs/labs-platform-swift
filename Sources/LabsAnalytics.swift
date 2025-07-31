@@ -11,10 +11,10 @@ import SwiftUI
 
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
-        public static var endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
+        static let defaultEndpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
+        static let defaultPushInterval: TimeInterval = 30
+        static let defaultExpireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
         
-        public static var pushInterval: TimeInterval = 30
-        public static var expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
         private var queue: Set<AnalyticsTxn> = [] {
             didSet {
                 let q = queue
@@ -25,15 +25,21 @@ public extension LabsPlatform {
         }
         private var activeOperations: [AnalyticsTimedOperation] = []
         private var dispatch: (any Cancellable)?
+        
+        let endpoint: URL
+        let pushInterval: TimeInterval
+        let expireInterval: TimeInterval
 
-        init() {
+        init(endpoint: URL = defaultEndpoint, pushInterval: TimeInterval = defaultPushInterval, expireInterval: TimeInterval = defaultExpireInterval) {
             // queue will be assigned the value in userdefaults on the first submission, so we will expire old values
             let data = UserDefaults.standard.data(forKey: "LabsAnalyticsQueue")
             let oldQueue = (try? JSONDecoder().decode(Set<AnalyticsTxn>.self, from: data ?? Data())) ?? []
+            self.endpoint = endpoint
+            self.pushInterval = pushInterval
+            self.expireInterval = expireInterval
             self.queue = oldQueue.filter {
-                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < LabsPlatform.Analytics.expireInterval
+                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < expireInterval
             }
-            
             
             Task {
                 await startTimer()
@@ -45,8 +51,8 @@ public extension LabsPlatform {
             dispatch = DispatchQueue
                 .global(qos: .utility)
                 .schedule(after: .init(.now()),
-                          interval: .seconds(LabsPlatform.Analytics.pushInterval),
-                          tolerance: .seconds(LabsPlatform.Analytics.pushInterval / 5)) { [weak self] in
+                          interval: .seconds(self.pushInterval),
+                          tolerance: .seconds(self.pushInterval / 5)) { [weak self] in
                     guard let self else { return }
                     Task {
                         await self.submitQueue()
@@ -129,7 +135,7 @@ extension LabsPlatform.Analytics {
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
     private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
-        guard var request = try? await URLRequest(url: LabsPlatform.Analytics.endpoint, mode: .jwt) else {
+        guard var request = try? await URLRequest(url: self.endpoint, mode: .jwt) else {
             return false
         }
         request.httpMethod = "POST"
