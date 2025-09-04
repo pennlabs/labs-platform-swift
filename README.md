@@ -203,6 +203,12 @@ Analytics are incredibly valuable when making design or roadmap decisions. Given
 
 The library was designed to make logging analytics simple, especially in SwiftUI-based View Hierarchies. However, there are other ways to log analytics that can be done in non SwiftUI-based contexts.
 
+### Configuration
+
+The Analytics configuration is part of the overall LabsPlatform object configuration. This means you can adjust properties such as the endpoint for analytics posts, the interval after which tokens are expired (removed from memory), or the period/interval in which these values are pushed to the endpoint.
+
+Analytics can be disabled by setting a `nil` configuration for the Analytics.Configuration object.
+
 ### SwiftUI Analytics Logging
 
 Given an analytics key: `pennmobile.dining.kcech.breakfast.appear`, it is easy to understand the general structure. Different paths are separated by `.`, enabling an easy understanding of the exact hierarchy that led to the given key.

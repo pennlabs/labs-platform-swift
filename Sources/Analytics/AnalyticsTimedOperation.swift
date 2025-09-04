@@ -13,9 +13,9 @@ public extension Task where Success == Void, Failure == Never {
     static func timedAnalyticsOperation(name: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive], _ operation: @Sendable @escaping () async -> Void) {
         Task {
             let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)", cancelOnScenePhase: cancelOnScenePhase)
-            await LabsPlatform.shared?.analytics.addTimedOperation(analytic)
+            await LabsPlatform.shared?.analytics?.addTimedOperation(analytic)
             await operation()
-            await LabsPlatform.shared?.analytics.completeTimedOperation(analytic)
+            await LabsPlatform.shared?.analytics?.completeTimedOperation(analytic)
         }
     }
 }
