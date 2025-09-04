@@ -10,10 +10,10 @@ import SwiftUI
 import Combine
 
 public extension Task where Success == Void, Failure == Never {
-    static func timedAnalyticsOperation(name: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive], _ operation: @Sendable @escaping () async -> Void) {
+    static func timedAnalyticsOperation(name: String, removeOnDuplicateName: Bool = false, addUniqueIdentifier: Bool = true, cancelOnScenePhase: [ScenePhase] = [.background, .inactive], _ operation: @Sendable @escaping () async -> Void) {
         Task {
-            let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)", cancelOnScenePhase: cancelOnScenePhase)
-            await LabsPlatform.shared?.analytics.addTimedOperation(analytic)
+            let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)\(addUniqueIdentifier ? ".\(UUID().uuidString.prefix(8).lowercased())" : "")", cancelOnScenePhase: cancelOnScenePhase)
+            await LabsPlatform.shared?.analytics.addTimedOperation(analytic, removeDuplicates: removeOnDuplicateName)
             await operation()
             await LabsPlatform.shared?.analytics.completeTimedOperation(analytic)
         }

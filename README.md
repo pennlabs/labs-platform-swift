@@ -347,9 +347,11 @@ Here, we notice that we're using the `AnalyticsContext.beginTimedOperation` and 
 
 Note: the full signature of `beginTimedOperation` function is
 ```swift
-AnalyticsContext.beginTimedOperation(operation: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive])
+AnalyticsContext.beginTimedOperation(operation: String, removeOnDuplicateName: Bool = true, cancelOnScenePhase: [ScenePhase] = [.background, .inactive])
 ```
 By default, operations are told to cancel whenever the user changes apps, closes the app, or puts their phone to sleep (`ScenePhase.background` and `ScenePhase.inactive`). Though, this behavior can be modified to fit a given use case, depending on the operation.
+
+Further, you can specify whether to remove duplicate names or proceed with them. Note that since these are accessible by keypath, ending a timed operation such that duplicate operation names have been started will end **all the operations with that path**, so this is enabled by default in this case.
 
 Under the hood, these two functions create and complete a `AnalyticsTimedOperation` object, whose identifier is `testing.operationview.operation.testing` (that is, `operation.{NAME OF OPERATION}` is appended to the current analytics path).
 
@@ -402,10 +404,12 @@ Our final use case is timed tasks. This is fairly trivial, but has a slight cons
 The library presents a `Task.timedAnalyticsOperation` static function, whose full signature is: 
 
 ```swift
-Task.timedAnalyticsOperation(operation: String, cancelOnScenePhase: [ScenePhase] = [.background, inactive]) {
+Task.timedAnalyticsOperation(operation: String, removeOnDuplicateName: Bool = false, addUniqueIdentifier: Bool = true, cancelOnScenePhase: [ScenePhase] = [.background, inactive]) {
     //function
 }
 ```
+
+Note that this is set up for asynchronous task groups by default. That is: `removeOnDuplicateName` is set to false and `addUniqueIdentifier` is set to true by default. The latter appends a unique string to the end of each task to ensure that the timing of each task can be measured separately.
 
 This is similar to our `AnalyticsContext.beginTimedOperation` function.
 
@@ -428,7 +432,7 @@ func updateIdentity() {
 
 By using `timedAnalyticsOperation`, the library creates an operation, runs the given task, then ends the operation and logs the total running time. This can be valuable in assessing loading times.
 
-The consideration is that because tasks do not take place in the view hierarchy, these operations will be labeled `global.operation.{NAME}`. Duplicate operation names have not been tested.
+The consideration is that because tasks do not take place in the view hierarchy, these operations will be labeled `global.operation.{NAME}`.
 
 ### Analytics Wrap-Up
 
