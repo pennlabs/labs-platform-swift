@@ -209,6 +209,7 @@ public extension View {
     /// - Parameters:
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
+    ///     - configuration: An overridden configuration object (for when specific behavior modification is desired)
     ///     - defaultLoginHandler: A function that should be called when the login flow intercepts the default login credentials (user and password both "root", by default)
     ///     - loginHandler(loggedIn: Bool): a function that will be called whenever the Platform goes to either the logged-in state or the logged-out state. This includes
     ///             uses of the [`LabsPlatform.logoutPlatform()`](x-source-tag://logoutPlatform) function (will always be `false`)

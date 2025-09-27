@@ -291,7 +291,20 @@ extension LabsPlatform {
             return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
         }
         
-        return .success(data)
+        if let idToken = data.idToken {
+            return .success(data)
+        } else {
+            // specifically retain the ID token from initial auth (if available)
+            
+            let combinedToken = PlatformAuthCredentials(
+                accessToken: data.accessToken,
+                expiresIn: data.expiresIn,
+                tokenType: data.tokenType,
+                refreshToken: data.refreshToken,
+                idToken: auth.idToken,
+                issuedAt: data.issuedAt)
+            return .success(combinedToken)
+        }
     }
 }
 

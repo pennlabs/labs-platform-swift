@@ -15,13 +15,16 @@ public extension LabsPlatform {
             let endpoint: URL
             let pushInterval: TimeInterval
             let expireInterval: TimeInterval
+            let bufferInterval: TimeInterval
             
             public init(endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!,
                         pushInterval: TimeInterval = 30,
-                        expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7)) {
+                        expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7),
+                        bufferInterval: TimeInterval = 5) {
                 self.endpoint = endpoint
                 self.pushInterval = pushInterval
                 self.expireInterval = expireInterval
+                self.bufferInterval = bufferInterval
             }
         }
         
@@ -76,7 +79,16 @@ public extension LabsPlatform {
                   let pennkey: String = jwt["pennkey"] as? String else {
                 return
             }
-            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
+            
+            let now = Date.now
+            
+            if let latest = self.queue.sorted(by: { $0.timestamp > $1.timestamp }).first(where: { $0.data.contains(where: { $0.key == value.key }) }),
+               Date.now.timeIntervalSince1970 - Double(latest.timestamp) < self.configuration.bufferInterval {
+                // we already have a token within buffer, though this is a really expensive operation
+                return
+            }
+            
+            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: now, data: [value]))
         }
         
         func recordAndSubmit(_ value: AnalyticsValue) async throws {
@@ -143,7 +155,7 @@ extension LabsPlatform.Analytics {
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
     private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
-        guard var request = try? await URLRequest(url: self.configuration.endpoint, mode: .jwt) else {
+        guard var request = try? await URLRequest(url: self.configuration.endpoint, mode: .accessToken) else {
             return false
         }
         request.httpMethod = "POST"
