@@ -34,7 +34,10 @@ public final class LabsPlatform: ObservableObject {
         self.authRedirect = redirectUrl
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
-        LabsPlatform.shared = self
+        Task {
+            self.authState = await getRefreshedAuthState()
+            LabsPlatform.shared = self
+        }
         UserDefaults.standard.loadPlatformHTTPCookies()
     }
     
