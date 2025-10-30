@@ -14,7 +14,6 @@ public extension URLRequest {
         guard let platform = await LabsPlatform.shared else {
             throw PlatformError.platformNotEnabled
         }
-        
         self = try await platform.authorizedURLRequest(url: url, mode: mode)
     }
 }
@@ -54,6 +53,12 @@ extension LabsPlatform {
     
     /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
     func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode) async throws -> URLRequest {
+        // Wait for an existing refresh operation to finish.
+        if self.enforceRefreshContinuationQueue != nil {
+            await withCheckedContinuation { cont in
+                self.enforceRefreshContinuationQueue!.append(cont)
+            }
+        }
         self.authState = await self.getRefreshedAuthState()
         guard case .loggedIn(let auth) = self.authState else {
             throw PlatformError.notLoggedIn

@@ -27,6 +27,7 @@ public final class LabsPlatform: ObservableObject {
     let clientId: String
     let authRedirect: String
     var webViewCheckedContinuation: CheckedContinuation<PlatformAuthState, any Error>?
+    var enforceRefreshContinuationQueue: [CheckedContinuation<Void, Never>]? = nil
     
     
     public init(clientId: String, redirectUrl: String) {
@@ -34,10 +35,7 @@ public final class LabsPlatform: ObservableObject {
         self.authRedirect = redirectUrl
         self.analytics = Analytics()
         self.authState = getCurrentAuthState()
-        Task {
-            self.authState = await getRefreshedAuthState()
-            LabsPlatform.shared = self
-        }
+        LabsPlatform.shared = self
         UserDefaults.standard.loadPlatformHTTPCookies()
     }
     
