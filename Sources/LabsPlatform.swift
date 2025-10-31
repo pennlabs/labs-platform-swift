@@ -27,6 +27,7 @@ public final class LabsPlatform: ObservableObject {
     let clientId: String
     let authRedirect: String
     var webViewCheckedContinuation: CheckedContinuation<PlatformAuthState, any Error>?
+    var enforceRefreshContinuationQueue: [CheckedContinuation<Void, Never>]? = nil
     
     
     public init(clientId: String, redirectUrl: String) {
