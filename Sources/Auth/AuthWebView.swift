@@ -32,44 +32,45 @@ struct AuthWebView: View {
 
 struct AuthWebViewRepresentable: UIViewRepresentable {
     let url: URL
-    
-    let nav: AuthNavigationDelegate
+    let redirect: String
     let completion: (Result<URL, any Error>) -> ()
     @Binding var isLoading: Bool
     
     init(url: URL, redirect: String, isLoading: Binding<Bool>, completion: @escaping (Result<URL, any Error>) -> ()) {
         self.url = url
+        self.redirect = redirect
         self.completion = completion
         self._isLoading = isLoading
-        self.nav = AuthNavigationDelegate(redirect: redirect, isLoading: isLoading, callback: completion)
+    }
+    
+    func makeCoordinator() -> AuthNavigationDelegate {
+        AuthNavigationDelegate(parent: self)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let view = WKWebView()
-        view.load(URLRequest(url: url))
-        view.navigationDelegate = nav
+        updateUIView(view, context: context)
         return view
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.load(URLRequest(url: url))
+        uiView.navigationDelegate = context.coordinator
+        
+        context.coordinator.parent = self
     }
 }
 
 @MainActor
 class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
-    let callback: (Result<URL, any Error>) -> ()
-    let redirect: String
-    @Binding var isLoading: Bool
+    var parent: AuthWebViewRepresentable
     
     private let loginScreen = "https://weblogin.pennkey.upenn.edu/idp/profile/SAML2/Redirect/SSO"
     private let mfaScreen = "https://api-ecae067e.duosecurity.com/frame/v4/auth"
     private let platformPermissionScreen = "https://platform.pennlabs.org/accounts/authorize/"
     
-    init(redirect: String, isLoading: Binding<Bool>, callback: @escaping (Result<URL, any Error>) -> Void) {
-        self.redirect = redirect
-        self._isLoading = isLoading
-        self.callback = callback
+    init(parent: AuthWebViewRepresentable) {
+        self.parent = parent
     }
     
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
@@ -79,13 +80,13 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
         
         if url.absoluteString.hasPrefix(mfaScreen) {
             webView.isUserInteractionEnabled = true
-            isLoading = false
+            parent.isLoading = false
         }
         
-        if url.absoluteString.hasPrefix(redirect) {
-            callback(.success(url))
-          }
-      }
+        if url.absoluteString.hasPrefix(parent.redirect) {
+            parent.completion(.success(url))
+        }
+    }
     
     func webView(
         _ webView: WKWebView,
@@ -117,7 +118,7 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
                     if pennkey == "root" && password == "root" {
                         // Indicate the default login using a query parameter
                         // This makes it so the default login is handled elsewhere
-                        self.callback(.success(URL(string: "\(self.redirect)?defaultlogin=true")!))
+                        parent.completion(.success(URL(string: "\(parent.redirect)?defaultlogin=true")!))
                         // Might get rid of this
                         decisionHandler(.allow)
                         return
@@ -127,13 +128,13 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
                     LabsKeychain.savePassword(password)
                     
                     webView.isUserInteractionEnabled = false
-                    self.isLoading = true
+                    parent.isLoading = true
                 }
                 decisionHandler(.allow)
             }
     }
     
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        callback(.failure(error))
+        parent.completion(.failure(error))
     }
 }
