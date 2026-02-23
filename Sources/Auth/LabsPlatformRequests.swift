@@ -25,6 +25,14 @@ public extension URLSession {
             throw PlatformError.platformNotEnabled
         }
         
+        // Wait for an existing refresh operation to finish.
+        if await LabsPlatform.shared?.enforceRefreshContinuationQueue != nil {
+            await withCheckedContinuation { cont in
+                Task { @MainActor in
+                    LabsPlatform.shared?.enforceRefreshContinuationQueue!.append(cont)
+                }
+            }
+        }
         let authState = await platform.getRefreshedAuthState()
         guard case .loggedIn(let auth) = authState else {
             throw PlatformError.notLoggedIn

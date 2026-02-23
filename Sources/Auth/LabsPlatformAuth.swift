@@ -23,7 +23,7 @@ extension LabsPlatform {
             fetchToken
         ]
         
-        Task {
+        Task { @MainActor in
             self.globalLoading = true
             // Hit the login URL to check for network status
             // will throw if no network (or if Platform is down)
@@ -91,12 +91,10 @@ extension LabsPlatform {
             throw PlatformAuthError.illegalState
         }
         
-        await MainActor.run {
-            self.webViewUrl = url
-        }
-        
         return try await withCheckedThrowingContinuation { continuation in
-            self.webViewCheckedContinuation = continuation
+            Task { @MainActor in
+                self.authWebViewState = .enabled(url: url, continuation: continuation)
+            }
         }
     }
     
@@ -135,9 +133,11 @@ extension LabsPlatform {
     
 // MARK: Other functions
     func urlCallbackFunction(callbackResult: Result<URL, any Error>) {
+        guard case let .enabled(url, continuation) = self.authWebViewState else { return }
+        
         if case .loggedIn(_) = self.authState {
-            self.webViewCheckedContinuation?.resume(returning: self.authState)
-            self.webViewCheckedContinuation = nil
+            continuation.resume(returning: self.authState)
+            self.authWebViewState = .disabled
             return
         }
         
@@ -145,23 +145,23 @@ extension LabsPlatform {
               case .newLogin(_, let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString) else {
             self.cancelLogin()
-            self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
-            self.webViewCheckedContinuation = nil
+            continuation.resume(throwing: PlatformAuthError.invalidCallback)
+            self.authWebViewState = .disabled
             return
         }
         
         if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
            defaultLogin == "true" {
             self.completeDefaultLogin()
-            self.webViewCheckedContinuation?.resume(returning: self.authState)
-            self.webViewCheckedContinuation = nil
+            continuation.resume(returning: self.authState)
+            self.authWebViewState = .disabled
             return
         }
         
         if let _ = comps.queryItems?.first(where: {$0.name == "error"})?.value {
             self.cancelLogin()
-            self.webViewCheckedContinuation?.resume(returning: PlatformAuthState.loggedOut)
-            self.webViewCheckedContinuation = nil
+            continuation.resume(returning: PlatformAuthState.loggedOut)
+            self.authWebViewState = .disabled
             self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
             return
         }
@@ -170,14 +170,13 @@ extension LabsPlatform {
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
             self.cancelLogin()
-            self.webViewCheckedContinuation?.resume(throwing: PlatformAuthError.invalidCallback)
-            self.webViewCheckedContinuation = nil
+            continuation.resume(throwing: PlatformAuthError.invalidCallback)
+            self.authWebViewState = .disabled
             return
         }
         
-        self.webViewUrl = nil
-        self.webViewCheckedContinuation?.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
-        self.webViewCheckedContinuation = nil
+        continuation.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
+        self.authWebViewState = .disabled
         return
     }
     

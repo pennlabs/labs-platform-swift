@@ -70,13 +70,13 @@ private struct AnalyticsView<Content: View>: View {
                     .onAppear {
                         guard let platform else { return }
                         Task {
-                            await platform.analytics.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
+                            await platform.analytics?.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
                         }
                     }
                     .onDisappear {
                         guard let platform else { return }
                         Task {
-                            await platform.analytics.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
+                            await platform.analytics?.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
                         }
                     }
             } else {

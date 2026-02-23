@@ -18,22 +18,22 @@ public final class LabsPlatform: ObservableObject {
     
     public private(set) static var shared: LabsPlatform?
     
-    @Published var analytics: Analytics
-    @Published var webViewUrl: URL?
-    @Published var authState: PlatformAuthState = .idle
-    @Published var alertText: String? = nil
-    @Published var globalLoading = false
+    @Published internal(set) var analytics: Analytics?
+    @Published internal(set) var authWebViewState: AuthWebViewState = .disabled
+    @Published internal(set) var authState: PlatformAuthState = .idle
+    @Published internal(set) var alertText: String? = nil
+    @Published internal(set) var globalLoading = false
     
     let clientId: String
     let authRedirect: String
-    var webViewCheckedContinuation: CheckedContinuation<PlatformAuthState, any Error>?
+
     var enforceRefreshContinuationQueue: [CheckedContinuation<Void, Never>]? = nil
     
     
     public init(clientId: String, redirectUrl: String) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
-        self.analytics = Analytics()
+        self.analytics = try? Analytics()
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
         UserDefaults.standard.loadPlatformHTTPCookies()
@@ -50,15 +50,19 @@ public final class LabsPlatform: ObservableObject {
 }
 
 struct PlatformProvider<Content: View>: View {
-    @StateObject var platform: LabsPlatform
+    @ObservedObject var platform: LabsPlatform
     @Environment(\.scenePhase) var scenePhase
     let content: Content
     let analyticsRoot: String
-    let loginHandler: (Bool) async -> ()
+    let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
     
-    init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl))
+    init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+        if LabsPlatform.shared == nil {
+            _ = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
+        }
+        self._platform = ObservedObject(initialValue: LabsPlatform.shared!)
+        
         self.analyticsRoot = analyticsRoot
         self.content = content()
         self.loginHandler = loginHandler
@@ -67,9 +71,16 @@ struct PlatformProvider<Content: View>: View {
     
 
     var body: some View {
-        let showSheet = Binding(get: { platform.webViewUrl != nil }) { new in
-            if platform.webViewUrl != nil && !new {
-                platform.cancelLogin()
+        let authURL = Binding<URL?>(get: {
+            if case let .enabled(url, _) = platform.authWebViewState {
+                return url
+            }
+            return nil
+        }) { new in
+            if case .enabled(_, _) = platform.authWebViewState {
+                if new == nil {
+                    platform.cancelLogin()
+                }
             }
         }
         
@@ -97,7 +108,7 @@ struct PlatformProvider<Content: View>: View {
             .alert(isPresented: showAlert) {
                 Alert(title: Text("Error"), message: Text(platform.alertText ?? "There was an error."))
             }
-            .sheet(isPresented: showSheet) {
+            .sheet(item: authURL) { url in
                 ZStack {
                     HStack {
                         Spacer()
@@ -117,12 +128,12 @@ struct PlatformProvider<Content: View>: View {
                     }
                 }
                 .background(.thickMaterial)
-                AuthWebView(url: platform.webViewUrl!, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
+                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
             }
             .onChange(of: scenePhase) { _ in
                 DispatchQueue.main.async {
                     Task {
-                        await platform.analytics.focusChanged(scenePhase)
+                        await platform.analytics?.focusChanged(scenePhase)
                     }
                 }
             }
@@ -158,24 +169,15 @@ struct PlatformProvider<Content: View>: View {
                     return
                 }
                 
-                platform.webViewUrl = nil
-                platform.webViewCheckedContinuation = nil
+                platform.authWebViewState = .disabled
                 
                 if !defaultLogin {
-                    DispatchQueue.main.async {
-                        Task {
-                            await self.loginHandler(result)
-                        }
-                    }
+                    self.loginHandler(result)
                 }
 
             }
             .onAppear {
-                DispatchQueue.main.async {
-                    Task {
-                        await self.loginHandler(platform.isLoggedIn)
-                    }
-                }
+                self.loginHandler(platform.isLoggedIn)
             }
         }
 }
@@ -195,7 +197,7 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform
-    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) async -> ()) -> some View {
+    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
         PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
             self
         }

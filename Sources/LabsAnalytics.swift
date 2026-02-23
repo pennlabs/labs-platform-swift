@@ -8,21 +8,17 @@
 import Foundation
 import Combine
 import SwiftUI
+import SwiftData
 
 public extension LabsPlatform {
-    final actor Analytics: ObservableObject, Sendable {
+    final actor Analytics: ObservableObject, Sendable, ModelActor {
+        public let modelContainer: ModelContainer
+        public let modelExecutor: any ModelExecutor
+        
         static let defaultEndpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
         static let defaultPushInterval: TimeInterval = 30
         static let defaultExpireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
         
-        private var queue: Set<AnalyticsTxn> = [] {
-            didSet {
-                let q = queue
-                DispatchQueue.main.async {
-                    UserDefaults.standard.setValue(try? JSONEncoder().encode(q), forKey: "LabsAnalyticsQueue")
-                }
-            }
-        }
         private var activeOperations: [AnalyticsTimedOperation] = []
         private var dispatch: (any Cancellable)?
         
@@ -30,20 +26,21 @@ public extension LabsPlatform {
         let pushInterval: TimeInterval
         let expireInterval: TimeInterval
 
-        init(endpoint: URL = defaultEndpoint, pushInterval: TimeInterval = defaultPushInterval, expireInterval: TimeInterval = defaultExpireInterval) {
-            // queue will be assigned the value in userdefaults on the first submission, so we will expire old values
-            let data = UserDefaults.standard.data(forKey: "LabsAnalyticsQueue")
-            let oldQueue = (try? JSONDecoder().decode(Set<AnalyticsTxn>.self, from: data ?? Data())) ?? []
+        init(endpoint: URL = defaultEndpoint, pushInterval: TimeInterval = defaultPushInterval, expireInterval: TimeInterval = defaultExpireInterval) throws {
+            self.modelContainer = try ModelContainer(for: AnalyticsTxn.self)
+            let context = ModelContext(modelContainer)
+            self.modelExecutor = DefaultSerialModelExecutor(modelContext: context)
+            
+            let oldValues: [AnalyticsTxn] = try self.modelExecutor.modelContext.fetch(AnalyticsTxn.oldValuesFetchDescriptor(olderThan: Date.now.addingTimeInterval(-1 * expireInterval)))
+            for val in oldValues {
+                modelExecutor.modelContext.delete(val)
+            }
             self.endpoint = endpoint
             self.pushInterval = pushInterval
             self.expireInterval = expireInterval
-            self.queue = oldQueue.filter {
-                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < expireInterval
-            }
             
             Task {
                 await startTimer()
-                print("Analytics timer started.")
             }
         }
 
@@ -68,7 +65,7 @@ public extension LabsPlatform {
                   let pennkey: String = jwt["pennkey"] as? String else {
                 return
             }
-            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
+            self.modelExecutor.modelContext.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
         }
         
         func recordAndSubmit(_ value: AnalyticsValue) async throws {
@@ -116,19 +113,32 @@ public extension LabsPlatform {
 extension LabsPlatform.Analytics {
     
     func submitQueue() async {
-        guard !queue.isEmpty else { return }
+        guard let toSubmit = try? self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()),
+              !toSubmit.isEmpty else { return }
 
-        let toSubmit = queue
-        queue.removeAll()
-
-        await withTaskGroup(of: Void.self) { group in
-            for txn in toSubmit {
+        let statics = toSubmit.map({ StaticAnalyticsTxnDTO(from: $0) })
+        let succeeded = await withTaskGroup(of: StaticAnalyticsTxnDTO?.self) { group in
+            for txn in statics {
                 group.addTask {
-                    if !(await self.analyticsPostRequest(txn)) {
-                        await self.record(txn.data.first!)
-                    }
+                    let success = await self.analyticsPostRequest(txn)
+                    return success ? txn : nil
                 }
             }
+            
+            var success: [StaticAnalyticsTxnDTO] = []
+            for await res in group {
+                if let res {
+                    success.append(res)
+                }
+            }
+            return success
+        }
+        
+        let intersection = toSubmit.filter { live in
+            succeeded.contains(where: { $0.id == live.id })
+        }
+        for el in intersection {
+            self.modelExecutor.modelContext.delete(el)
         }
     }
     
@@ -137,7 +147,7 @@ extension LabsPlatform.Analytics {
     // another design decision: we're only collecting data from logged-in users here,
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
-    private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
+    private func analyticsPostRequest(_ txn: StaticAnalyticsTxnDTO) async -> Bool {
         guard var request = try? await URLRequest(url: self.endpoint, mode: .jwt) else {
             return false
         }
