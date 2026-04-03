@@ -32,7 +32,7 @@ public struct AnalyticsContext {
             guard let platform, let oper = await findOperation(key: key, operation: operation) else {
                 return
             }
-            await platform.analytics.completeTimedOperation(oper)
+            await platform.analytics?.completeTimedOperation(oper)
         }
     }
     
@@ -44,7 +44,7 @@ public struct AnalyticsContext {
                 subpath.append(path[j])
             }
             let trialPath = subpath.joined(separator: ".")
-            if let oper = await platform?.analytics.getTimedOperation("\(trialPath).operation.\(operation)") {
+            if let oper = await platform?.analytics?.getTimedOperation("\(trialPath).operation.\(operation)") {
                 return oper
             }
         }

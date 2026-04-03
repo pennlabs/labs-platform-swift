@@ -11,9 +11,22 @@ import SwiftUI
 
 public extension LabsPlatform {
     final actor Analytics: ObservableObject, Sendable {
-        static let defaultEndpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!
-        static let defaultPushInterval: TimeInterval = 30
-        static let defaultExpireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7) // 7 days expiry
+        public struct Configuration {
+            let endpoint: URL
+            let pushInterval: TimeInterval
+            let expireInterval: TimeInterval
+            let bufferInterval: TimeInterval
+            
+            public init(endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!,
+                        pushInterval: TimeInterval = 30,
+                        expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7),
+                        bufferInterval: TimeInterval = 5) {
+                self.endpoint = endpoint
+                self.pushInterval = pushInterval
+                self.expireInterval = expireInterval
+                self.bufferInterval = bufferInterval
+            }
+        }
         
         private var queue: Set<AnalyticsTxn> = [] {
             didSet {
@@ -26,19 +39,17 @@ public extension LabsPlatform {
         private var activeOperations: [AnalyticsTimedOperation] = []
         private var dispatch: (any Cancellable)?
         
-        let endpoint: URL
-        let pushInterval: TimeInterval
-        let expireInterval: TimeInterval
+        let configuration: Analytics.Configuration
 
-        init(endpoint: URL = defaultEndpoint, pushInterval: TimeInterval = defaultPushInterval, expireInterval: TimeInterval = defaultExpireInterval) {
+        init?(configuration: Analytics.Configuration? = Analytics.Configuration()) {
+            guard let configuration else { return nil }
+            
             // queue will be assigned the value in userdefaults on the first submission, so we will expire old values
             let data = UserDefaults.standard.data(forKey: "LabsAnalyticsQueue")
             let oldQueue = (try? JSONDecoder().decode(Set<AnalyticsTxn>.self, from: data ?? Data())) ?? []
-            self.endpoint = endpoint
-            self.pushInterval = pushInterval
-            self.expireInterval = expireInterval
+            self.configuration = configuration
             self.queue = oldQueue.filter {
-                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < expireInterval
+                return Date.now.timeIntervalSince(Date.init(timeIntervalSince1970: TimeInterval($0.timestamp))) < configuration.expireInterval
             }
             
             Task {
@@ -51,8 +62,8 @@ public extension LabsPlatform {
             dispatch = DispatchQueue
                 .global(qos: .utility)
                 .schedule(after: .init(.now()),
-                          interval: .seconds(self.pushInterval),
-                          tolerance: .seconds(self.pushInterval / 5)) { [weak self] in
+                          interval: .seconds(self.configuration.pushInterval),
+                          tolerance: .seconds(self.configuration.pushInterval / 5)) { [weak self] in
                     guard let self else { return }
                     Task {
                         await self.submitQueue()
@@ -68,7 +79,16 @@ public extension LabsPlatform {
                   let pennkey: String = jwt["pennkey"] as? String else {
                 return
             }
-            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
+            
+            let now = Date.now
+            
+            if let latest = self.queue.sorted(by: { $0.timestamp > $1.timestamp }).first(where: { $0.data.contains(where: { $0.key == value.key }) }),
+               Date.now.timeIntervalSince1970 - Double(latest.timestamp) < self.configuration.bufferInterval {
+                // we already have a token within buffer, though this is a really expensive operation
+                return
+            }
+            
+            self.queue.insert(AnalyticsTxn(pennkey: pennkey, timestamp: now, data: [value]))
         }
         
         func recordAndSubmit(_ value: AnalyticsValue) async throws {
@@ -138,7 +158,7 @@ extension LabsPlatform.Analytics {
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
     private func analyticsPostRequest(_ txn: AnalyticsTxn) async -> Bool {
-        guard var request = try? await URLRequest(url: self.endpoint, mode: .jwt) else {
+        guard var request = try? await URLRequest(url: self.configuration.endpoint, mode: .accessToken) else {
             return false
         }
         request.httpMethod = "POST"
@@ -152,9 +172,8 @@ extension LabsPlatform.Analytics {
         }
         
         request.httpBody = data
-       
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let httpResponse = response as? HTTPURLResponse,
+        
+        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             return false
         }

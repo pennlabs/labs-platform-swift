@@ -77,11 +77,16 @@ Because this library demands OIDC support from the Penn Labs Platform, a client 
 - `analyticsRoot: String`: The root keypath for analytics tokens. For example, in Penn Mobile, all analytics values will look like `pennmobile.{FEATURE}.{SUBFEATURE}`. In that case, the `analyticsRoot = "pennmobile"`.
     - I decided to not make analytics optional. This is because I wanted the analytics requests to be simple with very little room for failure. If analytics were optional, I would want all analytics functions to throw errors instead of silently failing, which would lead to additional complexity when calling these functions.
 - `clientId: String` and `redirectUrl: String`. These are issued by Platform.
+- `configuration: LabsPlatform.Configuration`. See below.
 - `loginHandler: (Bool) async -> Void`: This function is run on startup and when the login state changes. The boolean argument is `true` when the user is logged in, `false` otherwise.
 - `defaultLoginHandler: () -> Void`: The App Store requires a default login for most apps (for App Store verification purposes). This function will run if the default login credentials are intercepted by the login WebView.
 
 
+## Configuration
 
+Many features of LabsPlatformSwift can be configured. You can see all configuration options by looking at the `LabsPlatform.Configuration` object.
+
+Observe that **analytics can be globally disabled** by passing a `nil` `AnalyticsConfiguration` object to the `LabsPlatform.Configuration`. In this case, all analytics requests will silently fail/do nothing.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -118,7 +123,7 @@ When the button is pressed, a WebView sheet should appear, prompting a log-in us
 There are a few ways to approach network requests using this library. An important factor is the endpoint: Swift `URLRequest` often does not retain authorization headers if the network request is redirected. Hence, the package provides two ways of approaching authenticated network requests.
 
 ### Aside
-For both methods, the user has the option to choose between two `PlatformAuthMode`s: `.jwt` and `.accessToken`. These are used by the various Penn Labs services. In most cases, a developer may opt to use the `.accessToken` (since this token is supported by most Penn Labs Mobile Backend services). However, there are some services (like Analytics) that require a JWT (JSON Web Token).
+For both methods, the user has the option to choose between two `PlatformAuthMode`s: `.jwt` and `.accessToken`. These are used by the various Penn Labs services. In most cases, a developer may opt to use the `.accessToken` (since this token is supported by most Penn Labs Mobile Backend services, as well as analytics). However, we also provide the option to pass the ID Token JSON Web Token, if passing an ID token for some kind of validation is desired by one's backend server.
 
 While Analytics, for example, is handled natively by this library, access to both kinds of tokens is given. 
 
@@ -131,7 +136,7 @@ The package provides an extension to the `Foundation.URLRequest` class. You can 
 // replace with your URL
 let url = URL(string: "https://platform.pennlabs.org/accounts/me/")! 
 
-var request: URLRequest = try await URLRequest(url: url, mode: PlatformAuthMode.jwt)
+var request: URLRequest = try await URLRequest(url: url, mode: PlatformAuthMode.accessToken)
 ```
 
 Note that this initializer is both asynchronous and throwing. It is asynchronous because it fetches a refreshed token prior to returning the `URLRequest` object. It is throwing because the user may not be logged in, Platform may not be enabled, or other issues may arise that prevent the creation of an authenticated `URLRequest`. Hence, another way of handling this is as follows (more code is provided, for reference, since this is the intended use)
@@ -139,7 +144,7 @@ Note that this initializer is both asynchronous and throwing. It is asynchronous
 ```swift
 func getMyIdentity() async -> Identity? {
     let url = URL(string: "https://platform.pennlabs.org/accounts/me/")!
-    guard let request = try? await URLRequest(url: url, mode: PlatformAuthMode.jwt) else {
+    guard let request = try? await URLRequest(url: url, mode: PlatformAuthMode.accessToken) else {
         return nil
     }
 
@@ -162,7 +167,7 @@ The package provides an extension to the `Foundation.URLSession` class. You can 
 
 ```swift
 // This has an optional config parameter that defaults to URLSessionConfiguration.default, but can be overridden.
-var session: URLSession = try await URLSession(mode: .jwt)
+var session: URLSession = try await URLSession(mode: .accessToken)
 
 ```
 
@@ -173,7 +178,7 @@ func getMyIdentity() async -> Identity? {
     // replace with your URL
     let url = URL(string: "https://platform.pennlabs.org/accounts/me/")! 
 
-    guard let session = try? await URLSession(mode: .jwt) else {
+    guard let session = try? await URLSession(mode: .accessToken) else {
         return nil
     }
 
@@ -199,9 +204,15 @@ A large motivation for the project was to implement easy-to-use analytics into o
 
 Analytics are incredibly valuable when making design or roadmap decisions. Given enough time and data, analytics allow developer to understand points of **friction** in their applications, perform **A/B testing** (not implemented...yet?), and otherwise better understand the **user experience** in a quantifiable way.
 
-*Side note: this library was originally designed solely for the brand new Penn Labs Analytics API, but upon realizing it requires JWT for verification, the package's objective was widened to support general authentication as well.*
+*Side note: this library was originally designed solely for the brand new Penn Labs Analytics API, but upon realizing it requires authentication with Platform directly, the package's objective was widened to support general authentication as well.*
 
 The library was designed to make logging analytics simple, especially in SwiftUI-based View Hierarchies. However, there are other ways to log analytics that can be done in non SwiftUI-based contexts.
+
+### Configuration
+
+The Analytics configuration is part of the overall LabsPlatform object configuration. This means you can adjust properties such as the endpoint for analytics posts, the interval after which tokens are expired (removed from memory), or the period/interval in which these values are pushed to the endpoint.
+
+Analytics can be disabled by setting a `nil` configuration for the Analytics.Configuration object.
 
 ### SwiftUI Analytics Logging
 
@@ -419,7 +430,7 @@ Consider the following usage, using our very own authenticated web requests.
 func updateIdentity() {
     Task.timedAnalyticsOperation(operation: "fetchIdentity") {
         let url = URL(string: "https://platform.pennlabs.org/accounts/me/")!
-        guard let request = try? await URLRequest(url: url, mode: PlatformAuthMode.jwt),
+        guard let request = try? await URLRequest(url: url, mode: PlatformAuthMode.accessToken),
             let (data, response) = try? await URLSession.data(for: request),
             let httpResponse = response as? HTTPURLResponse,
             httpResponse.statusCode == 200 else {
@@ -438,9 +449,15 @@ The consideration is that because tasks do not take place in the view hierarchy,
 
 The analytics values we've worked hard to record are cached between app launches. This is to prevent unsent values from being lost if a user closes the app.
 
-As for regular use cases, the analytics values are kept in a queue, which is flushed, by default, every 30 seconds. This can be modified by changing the static property: `LabsPlatform.Analytics.pushInterval`. Note that this property should be changed before `enableLabsPlatform` is run, since initializing Platform starts the DispatchQueue on a set interval (which cannot then be changed).
+There are some properties in Analytics that can be configured when LabsPlatformSwift is initialized by providing an AnalyticsConfiguration object in the usual configuration.
 
-Another property that can be changed is `LabsPlatform.Analytics.expireInterval`. By default, this value is set to `604800` seconds (7 days). On app launches, values created more than this interval ago are pruned from the queue. This is to prevent a backlog of analytics values in the event that there is a failure in some process.
+The first property that can be modified is the push URL. This allows for testing analytics using a local server or a server other than the production server.
+
+As for regular use cases, the analytics values are kept in a queue, which is flushed, by default, every 15 seconds. This can be modified by changing the static property: `pushInterval`. Note that this property should be changed before `enableLabsPlatform` is run, since initializing Platform starts the DispatchQueue on a set interval (which cannot then be changed).
+
+There is also a property called `bufferTime`, which defaults to 5 seconds. This buffer will not let analytics values within that time to be recorded. This is especially important for expensive geometric appearance calculation, where a user scrolling repeatedly would trigger many analytics values to be sent.
+
+Another property that can be changed is `expireInterval`. By default, this value is set to `604800` seconds (7 days). On app launches, values created more than this interval ago are pruned from the queue. This is to prevent a backlog of analytics values in the event that there is a failure in some process.
 
 Various endpoints can also be changed throughout the library.
 

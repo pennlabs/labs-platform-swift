@@ -43,7 +43,14 @@ public struct AnalyticsContextProvider<Content: View>: View {
 }
 
 extension View {
+    @available(*, deprecated, message: "Switch to analytics(_:logViewAppearances:)")
     @ViewBuilder public func analytics(_ subkey: String?, logViewAppearances: Bool) -> some View {
+        AnalyticsView(subkey: subkey, logViewAppearances: logViewAppearances ? .enabled : .disabled) {
+            self
+        }
+    }
+    
+    @ViewBuilder public func analytics(_ subkey: String?, logViewAppearances: ViewAppearanceLoggingMode) -> some View {
         AnalyticsView(subkey: subkey, logViewAppearances: logViewAppearances) {
             self
         }
@@ -53,11 +60,12 @@ extension View {
 private struct AnalyticsView<Content: View>: View {
     @Environment(\.labsAnalyticsPath) var path: String
     let content: Content
-    let logViewAppearances: Bool
+    let logViewAppearances: ViewAppearanceLoggingMode
     let subkey: String?
     @State var key: String = ""
+    @State var onScreen: Bool = false
     let platform = LabsPlatform.shared
-    init(subkey: String?, logViewAppearances: Bool, @ViewBuilder _ content: () -> Content) {
+    init(subkey: String?, logViewAppearances: ViewAppearanceLoggingMode, @ViewBuilder _ content: () -> Content) {
         self.content = content()
         self.subkey = subkey
         self.logViewAppearances = logViewAppearances
@@ -65,18 +73,26 @@ private struct AnalyticsView<Content: View>: View {
     
     var body: some View {
         Group {
-            if logViewAppearances {
+            if case .enabled = logViewAppearances {
                 content
                     .onAppear {
-                        guard let platform else { return }
-                        Task {
-                            await platform.analytics.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
-                        }
+                        onScreen = true
                     }
                     .onDisappear {
-                        guard let platform else { return }
-                        Task {
-                            await platform.analytics.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
+                        onScreen = false
+                    }
+            } else if case .enabledExpensive = logViewAppearances {
+                content
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onChange(of: proxy.frame(in: .global)) {
+                                    let frame = proxy.frame(in: .global)
+                                    let intersects = frame.intersects(.init(x: 0, y: 0, width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height))
+                                    if intersects != onScreen {
+                                        onScreen = intersects
+                                    }
+                                }
                         }
                     }
             } else {
@@ -87,5 +103,16 @@ private struct AnalyticsView<Content: View>: View {
         .onAppear {
             self.key = subkey == nil ? path : "\(path).\(subkey!)"
         }
+        .onChange(of: onScreen) {
+            Task {
+                await platform?.analytics?.record(AnalyticsValue(key: "\(key).\(onScreen ? "appear" : "disappear")", value: "1", timestamp: Date.now))
+            }
+        }
     }
+}
+
+public enum ViewAppearanceLoggingMode {
+    case disabled, enabled, enabledExpensive
+    
+    // enabledExpensive for more accurate processing, such as for portal posts where we actually want to be sure that it was on screen, instead of just in the VStack
 }

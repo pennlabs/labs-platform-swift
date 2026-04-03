@@ -15,7 +15,7 @@ public extension Task where Success == Void, Failure == Never {
             let analytic = AnalyticsTimedOperation(fullKey: "global.operation.\(name)\(addUniqueIdentifier ? ".\(UUID().uuidString.prefix(8).lowercased())" : "")", cancelOnScenePhase: cancelOnScenePhase)
             await LabsPlatform.shared?.analytics.addTimedOperation(analytic, removeDuplicates: removeOnDuplicateName)
             await operation()
-            await LabsPlatform.shared?.analytics.completeTimedOperation(analytic)
+            await LabsPlatform.shared?.analytics?.completeTimedOperation(analytic)
         }
     }
 }
