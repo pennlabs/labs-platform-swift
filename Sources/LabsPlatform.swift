@@ -11,31 +11,56 @@ import UIKit
 
 @MainActor
 public final class LabsPlatform: ObservableObject {
-    public static var authEndpoint = URL(string: "https://platform.pennlabs.org/accounts/authorize")!
-    public static var tokenEndpoint = URL(string: "https://platform.pennlabs.org/accounts/token/")!
-    public static var defaultAccount = "root"
-    public static var defaultPassword = "root"
+    public struct Configuration {
+        let authEndpoint: URL
+        let tokenEndpoint: URL
+        let defaultAccount: String
+        let defaultPassword: String
+        
+        let analyticsConfiguration: Analytics.Configuration?
+        
+        public init(authEndpoint: URL = URL(string: "https://platform.pennlabs.org/accounts/authorize")!,
+                    tokenEndpoint: URL = URL(string: "https://platform.pennlabs.org/accounts/token/")!,
+                    defaultAccount: String = "root",
+                    defaultPassword: String = "root",
+                    analyticsConfiguration: Analytics.Configuration? = Analytics.Configuration()) {
+            self.authEndpoint = authEndpoint
+            self.tokenEndpoint = tokenEndpoint
+            self.defaultAccount = defaultAccount
+            self.defaultPassword = defaultPassword
+            self.analyticsConfiguration = analyticsConfiguration
+        }
+    }
     
     public private(set) static var shared: LabsPlatform?
     
-    @Published internal(set) var analytics: Analytics?
-    @Published internal(set) var authWebViewState: AuthWebViewState = .disabled
-    @Published internal(set) var authState: PlatformAuthState = .idle
-    @Published internal(set) var alertText: String? = nil
-    @Published internal(set) var globalLoading = false
+    @Published var analytics: Analytics?
+    @Published var webViewUrl: URL?
+    @Published var authState: PlatformAuthState = .idle
+    @Published var alertText: String? = nil
+    @Published var globalLoading = false
     
     let clientId: String
     let authRedirect: String
 
     var enforceRefreshContinuationQueue: [CheckedContinuation<Void, Never>]? = nil
     
+    let configuration: Configuration
     
-    public init(clientId: String, redirectUrl: String) {
+    
+    public init(clientId: String, redirectUrl: String, configuration: Configuration = Configuration()) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
+<<<<<<< HEAD
         self.analytics = try? Analytics()
+=======
+        self.configuration = configuration
+>>>>>>> main
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
+        Task {
+            self.analytics = Analytics(configuration: configuration.analyticsConfiguration)
+        }
         UserDefaults.standard.loadPlatformHTTPCookies()
     }
     
@@ -57,12 +82,17 @@ struct PlatformProvider<Content: View>: View {
     let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
     
+<<<<<<< HEAD
     init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
         if LabsPlatform.shared == nil {
             _ = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
         }
         self._platform = ObservedObject(initialValue: LabsPlatform.shared!)
         
+=======
+    init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, configuration: configuration))
+>>>>>>> main
         self.analyticsRoot = analyticsRoot
         self.content = content()
         self.loginHandler = loginHandler
@@ -191,14 +221,20 @@ public extension View {
     /// - Parameters:
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
+    ///     - configuration: An overridden configuration object (for when specific behavior modification is desired)
     ///     - defaultLoginHandler: A function that should be called when the login flow intercepts the default login credentials (user and password both "root", by default)
     ///     - loginHandler(loggedIn: Bool): a function that will be called whenever the Platform goes to either the logged-in state or the logged-out state. This includes
     ///             uses of the [`LabsPlatform.logoutPlatform()`](x-source-tag://logoutPlatform) function (will always be `false`)
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform
+<<<<<<< HEAD
     @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
         PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
+=======
+    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration = LabsPlatform.Configuration(), defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) async -> ()) -> some View {
+        PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, configuration: configuration, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
+>>>>>>> main
             self
         }
     }

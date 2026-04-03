@@ -82,7 +82,7 @@ extension LabsPlatform {
         let verifier: String = AuthUtilities.codeVerifier()
         let state: String = AuthUtilities.stateString()
         guard let url = URL(string:
-                                "\(LabsPlatform.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read%20introspection&state=\(state)") else { throw PlatformAuthError.invalidUrl }
+                                "\(configuration.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read%20introspection&state=\(state)") else { throw PlatformAuthError.invalidUrl }
         return .newLogin(url: url, state: state, verifier: verifier)
     }
     
@@ -241,7 +241,7 @@ extension LabsPlatform {
         
         let postData =  postString.data(using: .utf8)
 
-        var request = URLRequest(url: LabsPlatform.tokenEndpoint)
+        var request = URLRequest(url: configuration.tokenEndpoint)
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpMethod = "POST"
         request.httpBody = postData
@@ -273,7 +273,7 @@ extension LabsPlatform {
         
         let postData =  postString.data(using: .utf8)
         
-        var request = URLRequest(url: LabsPlatform.tokenEndpoint)
+        var request = URLRequest(url: configuration.tokenEndpoint)
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpMethod = "POST"
         request.httpBody = postData
@@ -293,7 +293,20 @@ extension LabsPlatform {
             return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
         }
         
-        return .success(data)
+        if let idToken = data.idToken {
+            return .success(data)
+        } else {
+            // specifically retain the ID token from initial auth (if available)
+            
+            let combinedToken = PlatformAuthCredentials(
+                accessToken: data.accessToken,
+                expiresIn: data.expiresIn,
+                tokenType: data.tokenType,
+                refreshToken: data.refreshToken,
+                idToken: auth.idToken,
+                issuedAt: data.issuedAt)
+            return .success(combinedToken)
+        }
     }
     
     private func flushRefreshContinuationQueue() {
