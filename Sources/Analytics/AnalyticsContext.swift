@@ -20,10 +20,10 @@ public struct AnalyticsContext {
         }
     }
     
-    public func beginTimedOperation(operation: String, cancelOnScenePhase: [ScenePhase] = [.background, .inactive]) {
+    public func beginTimedOperation(operation: String, removeOnDuplicateName: Bool = true, cancelOnScenePhase: [ScenePhase] = [.background, .inactive]) {
         guard let analytics = platform?.analytics, operation != "" else { return }
         Task {
-            await analytics.addTimedOperation(AnalyticsTimedOperation(fullKey: "\(key).operation.\(operation)", cancelOnScenePhase: cancelOnScenePhase))
+            await analytics.addTimedOperation(AnalyticsTimedOperation(fullKey: "\(key).operation.\(operation)", cancelOnScenePhase: cancelOnScenePhase), removeDuplicates: removeOnDuplicateName)
         }
     }
     

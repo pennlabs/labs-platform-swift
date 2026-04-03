@@ -203,7 +203,9 @@ extension LabsPlatform {
     
     func getRefreshedAuthState() async -> PlatformAuthState {
         let state = getCurrentAuthState()
+        self.flushRefreshContinuationQueue()
         if case .needsRefresh(let auth) = state {
+            self.enforceRefreshContinuationQueue = []
             switch await tokenRefresh(auth) {
             case .success(let newCredential):
                 LabsKeychain.savePlatformCredential(newCredential)
@@ -226,7 +228,6 @@ extension LabsPlatform {
             
             return await getRefreshedAuthState()
         }
-        
         return getCurrentAuthState()
     }
     
@@ -261,6 +262,8 @@ extension LabsPlatform {
     }
     
     func tokenRefresh(_ auth: PlatformAuthCredentials) async -> Result<PlatformAuthCredentials, any Error> {
+        self.enforceRefreshContinuationQueue = []
+        
         let parameters: [String: String] = [
             "grant_type": "refresh_token",
             "refresh_token": auth.refreshToken,
@@ -305,6 +308,14 @@ extension LabsPlatform {
                 issuedAt: data.issuedAt)
             return .success(combinedToken)
         }
+    }
+    
+    private func flushRefreshContinuationQueue() {
+        guard let queue = self.enforceRefreshContinuationQueue else { return }
+        for cont in queue {
+            cont.resume()
+        }
+        self.enforceRefreshContinuationQueue = nil
     }
 }
 

@@ -96,7 +96,10 @@ public extension LabsPlatform {
             await submitQueue()
         }
         
-        func addTimedOperation(_ operation: AnalyticsTimedOperation, removeOnDuplicateName: Bool = true) {
+        func addTimedOperation(_ operation: AnalyticsTimedOperation, removeDuplicates: Bool) {
+            if removeDuplicates {
+                self.activeOperations.removeAll(where: { $0.fullKey == operation.fullKey })
+            }
             self.activeOperations.append(operation)
         }
         
