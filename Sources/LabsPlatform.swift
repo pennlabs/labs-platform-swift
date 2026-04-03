@@ -51,11 +51,8 @@ public final class LabsPlatform: ObservableObject {
     public init(clientId: String, redirectUrl: String, configuration: Configuration = Configuration()) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
-<<<<<<< HEAD
-        self.analytics = try? Analytics()
-=======
         self.configuration = configuration
->>>>>>> main
+
         self.authState = getCurrentAuthState()
         LabsPlatform.shared = self
         Task {
@@ -82,17 +79,12 @@ struct PlatformProvider<Content: View>: View {
     let loginHandler: (Bool) -> ()
     let defaultLoginHandler: (() -> ())?
     
-<<<<<<< HEAD
-    init(analyticsRoot: String, clientId: String, redirectUrl: String, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+
+    init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
         if LabsPlatform.shared == nil {
-            _ = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl)
+            _ = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, configuration: configuration)
         }
         self._platform = ObservedObject(initialValue: LabsPlatform.shared!)
-        
-=======
-    init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self._platform = StateObject(wrappedValue: LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, configuration: configuration))
->>>>>>> main
         self.analyticsRoot = analyticsRoot
         self.content = content()
         self.loginHandler = loginHandler
@@ -228,13 +220,8 @@ public extension View {
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform
-<<<<<<< HEAD
-    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
-        PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
-=======
-    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration = LabsPlatform.Configuration(), defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) async -> ()) -> some View {
+    @ViewBuilder func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration = LabsPlatform.Configuration(), defaultLoginHandler: (() -> ())? = nil, _ loginHandler: @escaping (Bool) -> ()) -> some View {
         PlatformProvider(analyticsRoot: analyticsRoot, clientId: clientId, redirectUrl: redirectUrl, configuration: configuration, loginHandler: loginHandler, defaultLoginHandler: defaultLoginHandler) {
->>>>>>> main
             self
         }
     }
