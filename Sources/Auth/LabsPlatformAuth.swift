@@ -191,8 +191,6 @@ extension LabsPlatform {
                 return .loggedOut
         }
         
-        
-        
         if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) < Date.now {
             return .needsRefresh(auth: credential)
         } else {
@@ -200,34 +198,40 @@ extension LabsPlatform {
         }
     }
     
-    func getRefreshedAuthState() async -> PlatformAuthState {
-        let state = getCurrentAuthState()
-        self.flushRefreshContinuationQueue()
+    @MainActor func getRefreshedAuthState() async -> PlatformAuthState {
+        if let task = self.refreshTask {
+            return await task.value
+        }
+        
+        let state = self.getCurrentAuthState()
+        
         if case .needsRefresh(let auth) = state {
-            self.enforceRefreshContinuationQueue = []
-            switch await tokenRefresh(auth) {
-            case .success(let newCredential):
-                LabsKeychain.savePlatformCredential(newCredential)
-                self.authState = .loggedIn(auth: newCredential)
-            case .failure(let error):
-                if let e = error as? PlatformAuthError {
-                    switch e.rawValue {
-                        // If the user has no connection, we can assume that their
-                        // Refresh is still valid, they just couldn't refresh
-                    case PlatformAuthError.noConnection.rawValue:
-                        return .needsRefresh(auth: auth)
-                    default:
-                        return .loggedOut
+            self.refreshTask = Task {
+                switch await self.tokenRefresh(auth) {
+                case .success(let newCredential):
+                    LabsKeychain.savePlatformCredential(newCredential)
+                    return .loggedIn(auth: newCredential)
+                case .failure(let error):
+                    if let e = error as? PlatformAuthError {
+                        switch e.rawValue {
+                            // If the user has no connection, we can assume that their
+                            // Refresh is still valid, they just couldn't refresh
+                        case PlatformAuthError.noConnection.rawValue:
+                            return .needsRefresh(auth: auth)
+                        default:
+                            return .loggedOut
+                        }
+                    }
+                    if let e = error as? DecodingError {
+                        return state
                     }
                 }
-                if let e = error as? DecodingError {
-                    return state
-                }
+                return self.getCurrentAuthState()
             }
-            
-            return await getRefreshedAuthState()
+            self.authState = await self.refreshTask!.value
+            self.refreshTask = nil
         }
-        return getCurrentAuthState()
+        return self.getCurrentAuthState()
     }
     
     
@@ -261,8 +265,6 @@ extension LabsPlatform {
     }
     
     func tokenRefresh(_ auth: PlatformAuthCredentials) async -> Result<PlatformAuthCredentials, any Error> {
-        self.enforceRefreshContinuationQueue = []
-        
         let parameters: [String: String] = [
             "grant_type": "refresh_token",
             "refresh_token": auth.refreshToken,
@@ -307,14 +309,6 @@ extension LabsPlatform {
                 issuedAt: data.issuedAt)
             return .success(combinedToken)
         }
-    }
-    
-    private func flushRefreshContinuationQueue() {
-        guard let queue = self.enforceRefreshContinuationQueue else { return }
-        for cont in queue {
-            cont.resume()
-        }
-        self.enforceRefreshContinuationQueue = nil
     }
 }
 

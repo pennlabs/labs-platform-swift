@@ -11,7 +11,7 @@ import UIKit
 
 @MainActor
 public final class LabsPlatform: ObservableObject {
-    public struct Configuration {
+    public struct Configuration: Sendable {
         let authEndpoint: URL
         let tokenEndpoint: URL
         let defaultAccount: String
@@ -37,27 +37,27 @@ public final class LabsPlatform: ObservableObject {
     @Published var analytics: Analytics?
     @Published var webViewUrl: URL?
     @Published var authState: PlatformAuthState = .idle
+    @Published var authWebViewState: AuthWebViewState = .disabled
     @Published var alertText: String? = nil
     @Published var globalLoading = false
     
     let clientId: String
     let authRedirect: String
-
-    var enforceRefreshContinuationQueue: [CheckedContinuation<Void, Never>]? = nil
     
     let configuration: Configuration
+    
+    var refreshTask: Task<PlatformAuthState, Never>? = nil
     
     
     public init(clientId: String, redirectUrl: String, configuration: Configuration = Configuration()) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
         self.configuration = configuration
-
+        
         self.authState = getCurrentAuthState()
+        self.analytics = try? Analytics(configuration: configuration.analyticsConfiguration)
+        
         LabsPlatform.shared = self
-        Task {
-            self.analytics = Analytics(configuration: configuration.analyticsConfiguration)
-        }
         UserDefaults.standard.loadPlatformHTTPCookies()
     }
     
@@ -80,7 +80,7 @@ struct PlatformProvider<Content: View>: View {
     let defaultLoginHandler: (() -> ())?
     
 
-    init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, loginHandler: @escaping (Bool) async -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, loginHandler: @escaping (Bool) -> (), defaultLoginHandler: (() -> ())? = nil, @ViewBuilder content: @escaping () -> Content) {
         if LabsPlatform.shared == nil {
             _ = LabsPlatform(clientId: clientId, redirectUrl: redirectUrl, configuration: configuration)
         }

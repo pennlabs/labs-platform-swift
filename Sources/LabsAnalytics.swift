@@ -15,7 +15,7 @@ public extension LabsPlatform {
         public let modelContainer: ModelContainer
         public let modelExecutor: any ModelExecutor
         
-        public struct Configuration {
+        public struct Configuration: Sendable {
             let endpoint: URL
             let pushInterval: TimeInterval
             let expireInterval: TimeInterval
@@ -37,18 +37,19 @@ public extension LabsPlatform {
         
         let configuration: Analytics.Configuration
 
-        init(configuration: Analytics.Configuration = Analytics.Configuration()) throws {
+        init?(configuration: Analytics.Configuration? = Analytics.Configuration()) throws {
+            guard let configuration else { return nil }
+            
             self.modelContainer = try ModelContainer(for: AnalyticsTxn.self)
             let context = ModelContext(modelContainer)
             self.modelExecutor = DefaultSerialModelExecutor(modelContext: context)
             
-            let oldValues: [AnalyticsTxn] = try self.modelExecutor.modelContext.fetch(AnalyticsTxn.oldValuesFetchDescriptor(olderThan: Date.now.addingTimeInterval(-1 * expireInterval)))
+            self.configuration = configuration
+            
+            let oldValues: [AnalyticsTxn] = try self.modelExecutor.modelContext.fetch(AnalyticsTxn.oldValuesFetchDescriptor(olderThan: Date.now.addingTimeInterval(-1 * configuration.expireInterval)))
             for val in oldValues {
                 modelExecutor.modelContext.delete(val)
             }
-            self.endpoint = endpoint
-            self.pushInterval = pushInterval
-            self.expireInterval = expireInterval
 
             Task {
                 await startTimer()
@@ -79,7 +80,7 @@ public extension LabsPlatform {
             
             let now = Date.now
             
-            if let latest = self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()).sorted(by: { $0.timestamp > $1.timestamp }).first(where: { $0.data.contains(where: { $0.key == value.key }) }),
+            if let latest = try? self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()).sorted(by: { $0.timestamp > $1.timestamp }).first(where: { $0.data.contains(where: { $0.key == value.key }) }),
                Date.now.timeIntervalSince1970 - Double(latest.timestamp) < self.configuration.bufferInterval {
                 // we already have a token within buffer, though this is a really expensive operation
                 return

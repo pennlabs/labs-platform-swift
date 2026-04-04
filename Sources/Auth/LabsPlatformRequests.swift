@@ -25,14 +25,6 @@ public extension URLSession {
             throw PlatformError.platformNotEnabled
         }
         
-        // Wait for an existing refresh operation to finish.
-        if await LabsPlatform.shared?.enforceRefreshContinuationQueue != nil {
-            await withCheckedContinuation { cont in
-                Task { @MainActor in
-                    LabsPlatform.shared?.enforceRefreshContinuationQueue!.append(cont)
-                }
-            }
-        }
         let authState = await platform.getRefreshedAuthState()
         guard case .loggedIn(let auth) = authState else {
             throw PlatformError.notLoggedIn
@@ -61,14 +53,14 @@ extension LabsPlatform {
     
     /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
     func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode) async throws -> URLRequest {
-        // Wait for an existing refresh operation to finish.
-        if self.enforceRefreshContinuationQueue != nil {
-            await withCheckedContinuation { cont in
-                self.enforceRefreshContinuationQueue!.append(cont)
-            }
+        guard let platform = await LabsPlatform.shared else {
+            throw PlatformError.platformNotEnabled
         }
-        self.authState = await self.getRefreshedAuthState()
-        guard case .loggedIn(let auth) = self.authState else {
+        
+        // Wait for an existing refresh operation to finish.
+        let authState = await platform.getRefreshedAuthState()
+        
+        guard case .loggedIn(let auth) = authState else {
             throw PlatformError.notLoggedIn
         }
         if case .jwt = mode, auth.idToken == nil {

@@ -76,17 +76,6 @@ private struct AnalyticsView<Content: View>: View {
             if case .enabled = logViewAppearances {
                 content
                     .onAppear {
-<<<<<<< HEAD
-                        guard let platform else { return }
-                        Task {
-                            await platform.analytics?.record(AnalyticsValue(key: "\(key).appear", value: "1", timestamp: Date.now))
-                        }
-                    }
-                    .onDisappear {
-                        guard let platform else { return }
-                        Task {
-                            await platform.analytics?.record(AnalyticsValue(key: "\(key).disappear", value: "1", timestamp: Date.now))
-=======
                         onScreen = true
                     }
                     .onDisappear {
@@ -104,7 +93,6 @@ private struct AnalyticsView<Content: View>: View {
                                         onScreen = intersects
                                     }
                                 }
->>>>>>> main
                         }
                     }
             } else {
