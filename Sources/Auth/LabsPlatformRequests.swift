@@ -86,10 +86,23 @@ extension LabsPlatform {
     }
 }
 
-public enum PlatformError: Error {
-    case notLoggedIn
-    case jwtNotFound
-    case platformNotEnabled
+public enum PlatformError: Int, LocalizedError {
+    case notLoggedIn = 10
+    case jwtNotFound = 11
+    case platformNotEnabled = -1
+    
+    public var errorDescription: String? {
+        let baseStr = switch self {
+        case .notLoggedIn:
+            "Your login credentials are invalid (or you are not logged in)."
+        case .jwtNotFound:
+            "Unable to send this request."
+        case .platformNotEnabled:
+            "Connection to the Penn Labs Platform is not correctly configured."
+        }
+        
+        return "\(baseStr) [error code \(self.rawValue)]"
+    }
 }
 
 public enum PlatformAuthMode: Int, Sendable {
