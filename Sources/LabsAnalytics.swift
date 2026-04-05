@@ -11,7 +11,7 @@ import SwiftUI
 import SwiftData
 
 public extension LabsPlatform {
-    final actor Analytics: ObservableObject, Sendable, ModelActor {
+    final actor Analytics: Sendable, ModelActor {
         public let modelContainer: ModelContainer
         public let modelExecutor: any ModelExecutor
         
