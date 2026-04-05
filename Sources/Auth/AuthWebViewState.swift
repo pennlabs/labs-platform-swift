@@ -8,16 +8,14 @@ import Foundation
 
 enum AuthWebViewState: Equatable {
     static func == (lhs: AuthWebViewState, rhs: AuthWebViewState) -> Bool {
-        if case let .disabled = lhs,
-           case let .disabled = rhs {
+        switch (lhs, rhs) {
+        case (.disabled, .disabled):
             return true
-        }
-        if case let .enabled(_, _) = lhs,
-           case let .enabled(_, _) = rhs {
+        case (.enabled(_, _), .enabled(_, _)):
             return true
+        default:
+            return false
         }
-        
-        return false
     }
     
     case disabled

@@ -132,7 +132,6 @@ public extension LabsPlatform {
 
 // MARK: Network
 extension LabsPlatform.Analytics {
-    
     func submitQueue() async {
         guard let toSubmit = try? self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()),
               !toSubmit.isEmpty else { return }
@@ -158,8 +157,8 @@ extension LabsPlatform.Analytics {
         let intersection = toSubmit.filter { live in
             succeeded.contains(where: { $0.id == live.id })
         }
-        for el in intersection {
-            self.modelExecutor.modelContext.delete(el)
+        for record in intersection {
+            self.modelExecutor.modelContext.delete(record)
         }
     }
     
