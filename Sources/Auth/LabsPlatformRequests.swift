@@ -53,14 +53,14 @@ extension LabsPlatform {
     
     /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
     func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode) async throws -> URLRequest {
-        // Wait for an existing refresh operation to finish.
-        if self.enforceRefreshContinuationQueue != nil {
-            await withCheckedContinuation { cont in
-                self.enforceRefreshContinuationQueue!.append(cont)
-            }
+        guard let platform = await LabsPlatform.shared else {
+            throw PlatformError.platformNotEnabled
         }
-        self.authState = await self.getRefreshedAuthState()
-        guard case .loggedIn(let auth) = self.authState else {
+        
+        // Wait for an existing refresh operation to finish.
+        let authState = await platform.getRefreshedAuthState()
+        
+        guard case .loggedIn(let auth) = authState else {
             throw PlatformError.notLoggedIn
         }
         if case .jwt = mode, auth.idToken == nil {
@@ -86,10 +86,23 @@ extension LabsPlatform {
     }
 }
 
-public enum PlatformError: Error {
-    case notLoggedIn
-    case jwtNotFound
-    case platformNotEnabled
+public enum PlatformError: Int, LocalizedError {
+    case notLoggedIn = 10
+    case jwtNotFound = 11
+    case platformNotEnabled = -1
+    
+    public var errorDescription: String? {
+        let baseStr = switch self {
+        case .notLoggedIn:
+            "Your login credentials are invalid (or you are not logged in)."
+        case .jwtNotFound:
+            "Unable to send this request."
+        case .platformNotEnabled:
+            "Connection to the Penn Labs Platform is not correctly configured."
+        }
+        
+        return "\(baseStr) [error code \(self.rawValue)]"
+    }
 }
 
 public enum PlatformAuthMode: Int, Sendable {
