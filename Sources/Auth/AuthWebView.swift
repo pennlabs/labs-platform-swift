@@ -127,7 +127,8 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
                     LabsKeychain.savePennkey(pennkey)
                     LabsKeychain.savePassword(password)
                     
-                    webView.isUserInteractionEnabled = false
+                    // TODO: catch this case better. reference DiningLoginManager.swift in Penn Mobile
+                    //webView.isUserInteractionEnabled = false
                     parent.isLoading = true
                 }
                 decisionHandler(.allow)
