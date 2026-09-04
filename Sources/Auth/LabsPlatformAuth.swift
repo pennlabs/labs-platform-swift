@@ -39,12 +39,12 @@ extension LabsPlatform {
             do {
                 for phase in phases {
                     self.authState = try await phase()
-                    if case .loggedOut = await self.authState {
+                    if case .loggedOut = self.authState {
                         break
                     }
                     
                     // Correctly handle default login
-                    if case .loggedIn(_) = await self.authState {
+                    if case .loggedIn(_) = self.authState {
                         break
                     }
                 }
@@ -52,7 +52,7 @@ extension LabsPlatform {
                 self.authState = .loggedOut
             }
             
-            if case .loggedIn(let credential) = self.authState {
+            if case .loggedIn(_) = self.authState {
                 return
             } else {
                 self.authState = .loggedOut
@@ -87,15 +87,24 @@ extension LabsPlatform {
     }
     
     func fetchAccessCode() async throws -> PlatformAuthState {
-        guard case .newLogin(let url, let state, let verifier) = self.authState else {
+        guard case .newLogin(let url, let state, let verifier) = self.authState,
+              let authRedirectUrl = URL(string: self.authRedirect),
+              let scheme = authRedirectUrl.scheme else {
             throw PlatformAuthError.illegalState
         }
         
-        return try await withCheckedThrowingContinuation { continuation in
-            Task { @MainActor in
-                self.authWebViewState = .enabled(url: url, continuation: continuation)
+        
+        let result: Result<URL, any Error>
+        do {
+            
+            guard let url = try await self.webAuthenticationSession?.authenticate(using: url, callback: .customScheme(scheme), additionalHeaderFields: [:]) else {
+                throw PlatformAuthError.invalidCallback
             }
+            result = .success(url)
+        } catch {
+            result = .failure(error)
         }
+        return try urlCallbackFunction(callbackResult: result)
     }
     
     func fetchToken() async throws -> PlatformAuthState {
@@ -132,52 +141,22 @@ extension LabsPlatform {
     }
     
 // MARK: Other functions
-    func urlCallbackFunction(callbackResult: Result<URL, any Error>) {
-        guard case let .enabled(url, continuation) = self.authWebViewState else { return }
-        
+    func urlCallbackFunction(callbackResult: Result<URL, any Error>) throws -> PlatformAuthState {
         if case .loggedIn(_) = self.authState {
-            continuation.resume(returning: self.authState)
-            self.authWebViewState = .disabled
-            return
+            return self.authState
         }
         
         guard case .success(let url) = callbackResult,
               case .newLogin(_, let currentState, let verifier) = self.authState,
-              let comps = URLComponents(string: url.absoluteString) else {
-            self.cancelLogin()
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
-            self.authWebViewState = .disabled
-            return
-        }
-        
-        if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
-           defaultLogin == "true" {
-            self.completeDefaultLogin()
-            continuation.resume(returning: self.authState)
-            self.authWebViewState = .disabled
-            return
-        }
-        
-        if let _ = comps.queryItems?.first(where: {$0.name == "error"})?.value {
-            self.cancelLogin()
-            continuation.resume(returning: PlatformAuthState.loggedOut)
-            self.authWebViewState = .disabled
-            self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
-            return
-        }
-        
-        guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
+              let comps = URLComponents(string: url.absoluteString),
+              let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
             self.cancelLogin()
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
-            self.authWebViewState = .disabled
-            return
+            throw PlatformAuthError.invalidCallback
         }
         
-        continuation.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
-        self.authWebViewState = .disabled
-        return
+        return .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier)
     }
     
 // MARK: Setup + Refresh
