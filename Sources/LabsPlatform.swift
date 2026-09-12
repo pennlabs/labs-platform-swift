@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import UIKit
 import AuthenticationServices
+import Network
 
 @MainActor
 public final class LabsPlatform: ObservableObject {
@@ -17,9 +18,9 @@ public final class LabsPlatform: ObservableObject {
         let tokenEndpoint: URL
         let defaultAccount: String
         let defaultPassword: String
-        
+
         let analyticsConfiguration: Analytics.Configuration?
-        
+
         public init(authEndpoint: URL = URL(string: "https://platform.pennlabs.org/accounts/authorize")!,
                     tokenEndpoint: URL = URL(string: "https://platform.pennlabs.org/accounts/token/")!,
                     defaultAccount: String = "root",
@@ -32,52 +33,62 @@ public final class LabsPlatform: ObservableObject {
             self.analyticsConfiguration = analyticsConfiguration
         }
     }
-    
+
     public private(set) static var shared: LabsPlatform?
-    
+
     @Published var analytics: Analytics?
     @Published var authState: PlatformAuthState = .idle {
         didSet { authStateDidChange(from: oldValue) }
     }
-    @Published var alertText: String? = nil
     @Published var globalLoading = false
-    
+
     let clientId: String
     let authRedirect: String
-    
+
     let configuration: Configuration
-    
-    var refreshTask: Task<PlatformAuthState, Never>? = nil
-    var webAuthenticationSession: WebAuthenticationSession? = nil
-    
-    /// How many times a `RefreshFlowFailedResult.tryAgain` from the delegate is honored before the platform logs out.
+
+    var loginTask: Task<Void, Never>?
+    var refreshTask: Task<Void, Never>?
+    var webAuthenticationSession: WebAuthenticationSession?
+
+    private let pathMonitor = NWPathMonitor()
+    private var pathTask: Task<Void, Never>?
+    /// Mirrors `NWPathMonitor`; token refreshes are skipped while `false`.
+    public internal(set) var isNetworkAvailable = true
+
+    /// How many times a `RefreshFlowFailedResult.tryAgain` is honored before the platform logs out.
     public static let maxRefreshAttempts = 3
-    
-    /// Receives auth, request, and analytics events. See [`LabsPlatformDelegate`](x-source-tag://LabsPlatformDelegate).
-    ///
-    /// Assigning a new delegate immediately reports the current logged-in state to it (if the platform is not mid-login).
+
+    /// Receives auth, request, and analytics events. Held weakly. Attaching reports the current logged-in state immediately.
     public weak var delegate: (any LabsPlatformDelegate)? {
         didSet {
-            guard oldValue !== delegate, let delegate else { return }
-            if let state = loggedInState(for: authState) {
-                delegate.labsPlatformAuth(didUpdateLoggedInState: state, platform: self)
-            }
+            guard oldValue !== delegate, let delegate, let state = loggedInState(for: authState) else { return }
+            delegate.labsPlatformAuth(didUpdateLoggedInState: state, platform: self)
         }
     }
-    
-    
+
     public init(clientId: String, redirectUrl: String, configuration: Configuration = Configuration()) {
         self.clientId = clientId
         self.authRedirect = redirectUrl
         self.configuration = configuration
-        
+
         self.authState = getCurrentAuthState()
         self.analytics = try? Analytics(configuration: configuration.analyticsConfiguration)
-        
+
         LabsPlatform.shared = self
         UserDefaults.standard.loadPlatformHTTPCookies()
+
+        pathTask = Task { [weak self, pathMonitor] in
+            for await path in pathMonitor.paths() {
+                self?.isNetworkAvailable = path.status == .satisfied
+            }
+        }
     }
-    
+
+    deinit {
+        pathTask?.cancel()
+    }
+
     public var isLoggedIn: Bool {
         switch self.authState {
         case .loggedIn(_), .needsRefresh(_), .refreshing(_):
@@ -86,8 +97,8 @@ public final class LabsPlatform: ObservableObject {
             return false
         }
     }
-    
-    /// `true` when the current session was created with the default (App Store review) credentials.
+
+    /// `true` when the session was created with the default (App Store review) credentials.
     public var isDefaultLogin: Bool {
         switch self.authState {
         case .loggedIn(let auth), .needsRefresh(let auth):
@@ -96,8 +107,7 @@ public final class LabsPlatform: ObservableObject {
             return false
         }
     }
-    
-    /// The delegate-facing view of a settled auth state, or `nil` while an auth flow is in progress.
+
     private func loggedInState(for state: PlatformAuthState) -> (loggedIn: Bool, isDefaultLogin: Bool)? {
         switch state {
         case .loggedOut:
@@ -108,34 +118,25 @@ public final class LabsPlatform: ObservableObject {
             return nil
         }
     }
-    
-    /// Persists credentials and notifies the delegate whenever `authState` settles into a new logged-in/logged-out state.
+
+    /// Persists credentials and notifies the delegate when `authState` settles. Equality is by case, so a refreshed
+    /// credential in the same case is persisted but not re-announced.
     private func authStateDidChange(from oldValue: PlatformAuthState) {
-        // PlatformAuthState equality only compares the case, so a refreshed credential in the same
-        // state does not re-notify. Refresh persists its own credential.
-        guard oldValue != authState else { return }
-        
         switch authState {
         case .loggedOut:
-            // Note, don't reset the stored analytics queue in UserDefaults, because they
-            // may log back in and we would want to submit them then (assuming
-            // the transactions haven't timed out)
             LabsKeychain.clearPlatformCredential()
             LabsKeychain.deletePennkey()
             LabsKeychain.deletePassword()
         case .loggedIn(let auth), .needsRefresh(let auth):
             LabsKeychain.savePlatformCredential(auth)
         default:
-            // Do not run anything in the event that we are in the
-            // middle of an auth flow
             return
         }
-        
-        if let state = loggedInState(for: authState) {
-            delegate?.labsPlatformAuth(didUpdateLoggedInState: state, platform: self)
-        }
+
+        guard oldValue != authState, let state = loggedInState(for: authState) else { return }
+        delegate?.labsPlatformAuth(didUpdateLoggedInState: state, platform: self)
     }
-    
+
     internal func setWebAuthenticationSession(_ session: WebAuthenticationSession) {
         self.webAuthenticationSession = session
     }
@@ -147,7 +148,7 @@ struct PlatformProvider<Content: View>: View {
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     let content: Content
     let analyticsRoot: String
-    
+    let delegate: (any LabsPlatformDelegate)?
 
     init(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration, delegate: (any LabsPlatformDelegate)?, @ViewBuilder content: @escaping () -> Content) {
         if LabsPlatform.shared == nil {
@@ -156,19 +157,11 @@ struct PlatformProvider<Content: View>: View {
         self._platform = ObservedObject(initialValue: LabsPlatform.shared!)
         self.analyticsRoot = analyticsRoot
         self.content = content()
-        if let delegate {
-            LabsPlatform.shared!.delegate = delegate
-        }
+        self.delegate = delegate
     }
-    
+
 
     var body: some View {
-        let showAlert = Binding(get: { platform.alertText != nil }) { new in
-            if platform.alertText != nil && !new {
-                platform.alertText = nil
-            }
-        }
-        
         ZStack {
             content
             if platform.globalLoading {
@@ -184,18 +177,16 @@ struct PlatformProvider<Content: View>: View {
             }
         }
             .environment(\.labsAnalyticsPath, analyticsRoot)
-            .alert(isPresented: showAlert) {
-                Alert(title: Text("Error"), message: Text(platform.alertText ?? "There was an error."))
-            }
             .onChange(of: scenePhase) {
-                DispatchQueue.main.async {
-                    Task {
-                        await platform.analytics?.focusChanged(scenePhase)
-                    }
+                Task {
+                    await platform.analytics?.focusChanged(scenePhase)
                 }
             }
             .onAppear {
-                self.platform.setWebAuthenticationSession(webAuthenticationSession)
+                platform.setWebAuthenticationSession(webAuthenticationSession)
+                if let delegate {
+                    platform.delegate = delegate
+                }
             }
         }
 }
@@ -210,10 +201,9 @@ public extension View {
     ///     - clientId: A Platform-granted clientId that has permission to get JWTs
     ///     - redirectUrl: A valid redirect URI (allowed by the Platform application)
     ///     - configuration: An overridden configuration object (for when specific behavior modification is desired)
-    ///     - delegate: An object receiving auth, request, and analytics events. See [`LabsPlatformDelegate`](x-source-tag://LabsPlatformDelegate).
-    ///             The platform holds it weakly, so the caller must keep it alive (e.g. as a `@StateObject`).
-    ///             Login state changes, including [`LabsPlatform.logoutPlatform()`](x-source-tag://logoutPlatform), are reported via
-    ///             `labsPlatformAuth(didUpdateLoggedInState:platform:)`, and the current state is reported as soon as the delegate is attached.
+    ///     - delegate: Receives auth, request, and analytics events (see [`LabsPlatformDelegate`](x-source-tag://LabsPlatformDelegate)).
+    ///             Held weakly, so keep it alive (e.g. as a `@StateObject`). Attached on appear, at which point the current
+    ///             login state is reported via `labsPlatformAuth(didUpdateLoggedInState:platform:)`.
     ///
     /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
     /// - Tag: enableLabsPlatform

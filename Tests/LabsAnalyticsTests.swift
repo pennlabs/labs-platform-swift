@@ -25,8 +25,8 @@ final class LabsAnalyticsTests: XCTestCase {
         // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
         // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
         
-        let txn: AnalyticsTxn = AnalyticsTxn(pennkey: "melitski", data: [])
-        let val = try JSONEncoder().encode(txn)
+        let txn: AnalyticsTxn = AnalyticsTxn(pennkey: "melitski", timestamp: .now, data: [])
+        let val = try JSONEncoder().encode(StaticAnalyticsTxnDTO(from: txn))
         let str = String(data: val, encoding: .utf8)
         print("\(str)")
     }

@@ -21,121 +21,78 @@ public extension URLRequest {
 /// Provides a `URLSession` with authenticated header fields depending on the `authenticationMode` (JWT or Legacy).
 ///
 /// > Note: Requests sent through a session created this way do not pass through the
-/// > `LabsPlatformDelegate` request hooks, since the headers are applied at the session level.
+/// > `LabsPlatformDelegate` request hook, since the headers are applied at the session level.
 public extension URLSession {
-    /// Authorizes `request` with the token type of choice, runs it through the delegate's
-    /// `labsPlatformRequests(willSendRequest:platform:)`, performs it on this session, and reports the outcome to
-    /// `labsPlatformRequests(didCompleteRequest:result:platform:)`.
-    ///
-    /// Throws `PlatformError` if the platform is not enabled or the user is not logged in, otherwise rethrows the transport error.
-    func data(for request: URLRequest, mode: PlatformAuthMode) async throws -> (Data, URLResponse) {
-        guard let platform = await LabsPlatform.shared else {
-            throw PlatformError.platformNotEnabled
-        }
-        let authorized = try await platform.authorizedURLRequest(request, mode: mode)
-        do {
-            let result = try await self.data(for: authorized)
-            await platform.notifyRequestCompleted(authorized, result: .success(result))
-            return result
-        } catch {
-            await platform.notifyRequestCompleted(authorized, result: .failure(error))
-            throw error
-        }
-    }
-    
-    /// Convenience for `data(for:mode:)` with a plain GET of `url`.
-    func data(from url: URL, mode: PlatformAuthMode) async throws -> (Data, URLResponse) {
-        try await data(for: URLRequest(url: url), mode: mode)
-    }
-
     convenience init(authenticationMode: PlatformAuthMode, config: URLSessionConfiguration = .default) async throws {
         guard let platform = await LabsPlatform.shared else {
             throw PlatformError.platformNotEnabled
         }
-        
-        let authState = await platform.getRefreshedAuthState()
-        guard case .loggedIn(let auth) = authState else {
-            throw PlatformError.notLoggedIn
-        }
-        if case .jwt = authenticationMode, auth.idToken == nil {
-            throw PlatformError.jwtNotFound
-        }
-        var configuration = config
-        switch authenticationMode {
-        case .jwt:
-            config.httpAdditionalHeaders = [
-                "Authorization": "\(auth.tokenType) \(auth.idToken!)",
-                "X-Authorization": "\(auth.tokenType) \(auth.idToken!)"
-            ]
-        case .accessToken:
-            config.httpAdditionalHeaders = [
-                "Authorization": "\(auth.tokenType) \(auth.accessToken)",
-                "X-Authorization": "\(auth.tokenType) \(auth.accessToken)"
-            ]
-        }
-        self.init(configuration: configuration)
+        config.httpAdditionalHeaders = try await platform.authorizationHeaders(mode: authenticationMode)
+        self.init(configuration: config)
     }
 }
 
 extension LabsPlatform {
-    
-    /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
-    ///
-    /// - Parameter notifyDelegate: when `true` (app-originated requests), the result is passed through the delegate's
-    ///   `labsPlatformRequests(willSendRequest:platform:)`. Library-internal traffic passes `false`.
+    /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token).
+    /// App-originated requests (`notifyDelegate == true`) pass through the delegate's `willSendRequest` hook.
     func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode, notifyDelegate: Bool = true) async throws -> URLRequest {
-        // Wait for an existing refresh operation to finish.
-        let authState = await self.getRefreshedAuthState()
-        
-        guard case .loggedIn(let auth) = authState else {
-            throw PlatformError.notLoggedIn
-        }
-        if case .jwt = mode, auth.idToken == nil {
-            throw PlatformError.jwtNotFound
-        }
         var newRequest = request
-        switch mode {
-        case .jwt:
-            newRequest.setValue("\(auth.tokenType) \(auth.idToken!)", forHTTPHeaderField: "Authorization")
-            newRequest.setValue("\(auth.tokenType) \(auth.idToken!)", forHTTPHeaderField: "X-Authorization")
-            break
-        case .accessToken:
-            newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "Authorization")
-            newRequest.setValue("\(auth.tokenType) \(auth.accessToken)", forHTTPHeaderField: "X-Authorization")
-            break
+        for (field, value) in try await authorizationHeaders(mode: mode) {
+            newRequest.setValue(value, forHTTPHeaderField: field)
         }
-        
-        if notifyDelegate, let delegate = self.delegate {
+        if notifyDelegate, let delegate {
             newRequest = delegate.labsPlatformRequests(willSendRequest: newRequest, platform: self)
         }
-        
         return newRequest
     }
-    
-    func notifyRequestCompleted(_ request: URLRequest, result: Result<(Data, URLResponse), any Error>) {
-        self.delegate?.labsPlatformRequests(didCompleteRequest: request, result: result, platform: self)
-    }
-    
+
     func authorizedURLRequest(url: URL, mode: PlatformAuthMode, notifyDelegate: Bool = true) async throws -> URLRequest {
-        return try await authorizedURLRequest(URLRequest(url: url), mode: mode, notifyDelegate: notifyDelegate)
+        try await authorizedURLRequest(URLRequest(url: url), mode: mode, notifyDelegate: notifyDelegate)
+    }
+
+    func authorizationHeaders(mode: PlatformAuthMode) async throws -> [String: String] {
+        let auth: PlatformAuthCredentials
+        switch await getRefreshedAuthState() {
+        case .loggedIn(let credential):
+            auth = credential
+        case .needsRefresh:
+            throw PlatformError.refreshUnavailable
+        default:
+            throw PlatformError.notLoggedIn
+        }
+
+        let token: String
+        switch mode {
+        case .accessToken:
+            token = auth.accessToken
+        case .jwt:
+            guard let idToken = auth.idToken else { throw PlatformError.jwtNotFound }
+            token = idToken
+        }
+        let value = "\(auth.tokenType) \(token)"
+        return ["Authorization": value, "X-Authorization": value]
     }
 }
 
 public enum PlatformError: Int, LocalizedError {
     case notLoggedIn = 10
     case jwtNotFound = 11
+    /// The session is valid but the token has expired and the device is offline, so it cannot be refreshed yet.
+    case refreshUnavailable = 12
     case platformNotEnabled = -1
-    
+
     public var errorDescription: String? {
         let baseStr = switch self {
         case .notLoggedIn:
             "Your login credentials are invalid (or you are not logged in)."
         case .jwtNotFound:
             "Unable to send this request."
+        case .refreshUnavailable:
+            "Your session needs to be refreshed, but the network is unavailable."
         case .platformNotEnabled:
             "Connection to the Penn Labs Platform is not correctly configured."
         }
-        
+
         return "\(baseStr) [error code \(self.rawValue)]"
     }
 }

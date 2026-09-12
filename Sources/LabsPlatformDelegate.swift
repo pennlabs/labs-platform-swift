@@ -7,109 +7,93 @@
 
 import Foundation
 
-/// Receives events from the `LabsPlatform` singleton.
-///
-/// Every method has a default implementation, so adopters only implement the events they care about.
-/// All methods are invoked on the main actor. Assign a delegate via
-/// [`View.enableLabsPlatform(...)`](x-source-tag://enableLabsPlatform) or by setting `LabsPlatform.shared?.delegate`.
-///
+/// Receives auth, request, and analytics events from `LabsPlatform`. Every method has a default implementation.
 /// - Tag: LabsPlatformDelegate
 @MainActor
 public protocol LabsPlatformDelegate: AnyObject {
-    // MARK: Auth-related Delegate Events
-
-    /// Called whenever the platform settles into a logged-in or logged-out state, and once when the delegate is first attached.
-    ///
-    /// - Parameters:
-    ///     - state: `loggedIn` is `true` for any valid session. `isDefaultLogin` is `true` when the session was created with the
-    ///              App Store review credentials (see `LabsPlatform.Configuration.defaultAccount`). In that case no real Platform
-    ///              credential exists, so authenticated requests will fail; apps should present mock data instead.
+    // MARK: Auth
+    
+    /// Called when the platform settles into a logged-in or logged-out state, and once when the delegate is attached.
     func labsPlatformAuth(didUpdateLoggedInState state: (loggedIn: Bool, isDefaultLogin: Bool), platform: LabsPlatform)
-
-    /// Called when an interactive login attempt started by `loginWithPlatform()` fails. A user cancelling the login sheet is not a failure.
-    /// The platform always transitions to `loggedOut` after this call.
-    func labsPlatformAuth(loginFlowFailedWithError error: any Error, platform: LabsPlatform)
-
-    /// Called when the login callback reports the default (App Store review) credentials (a `defaultlogin=true` query item on the redirect).
-    ///
-    /// - Returns: `true` to accept the default login and enter a logged-in state with `isDefaultLogin == true`;
-    ///            `false` to reject it, which cancels the login and leaves the platform logged out. Defaults to `true`.
+    
+    /// Called when an interactive login fails. The platform shows no UI of its own, so present `error` here if appropriate.
+    /// Cancelling the login is not a failure.
+    func labsPlatformAuth(loginFlowFailedWithError error: PlatformAuthFlowError, platform: LabsPlatform)
+    
+    /// Called when the login callback carries the default (App Store review) credentials. Return `false` to reject them.
     func labsPlatformAuth(didReceiveDefaultLoginCredentials credentials: (username: String, password: String), platform: LabsPlatform) -> Bool
-
-    /// Called immediately before a token refresh request is sent to the Platform token endpoint. Useful for logging.
+    
+    /// Called immediately before a token refresh request is sent.
     func labsPlatformAuth(willPerformRefreshRequest request: URLRequest, platform: LabsPlatform)
-
-    /// Called when a token refresh fails. The return value decides what happens to the session.
-    ///
-    /// The default implementation returns `RefreshFlowFailedResult.default(for:)`: stay logged in on network or decoding
-    /// errors (the refresh token is presumed still valid), log out on anything else (e.g. the server rejected the token).
-    /// `tryAgain` is retried up to `LabsPlatform.maxRefreshAttempts` times before the platform gives up and logs out.
-    func labsPlatformAuth(refreshFlowFailedWithError error: any Error, platform: LabsPlatform) -> RefreshFlowFailedResult
-
-    // MARK: URLRequest-related Delegate Events
-
-    /// Called after the platform has attached authorization headers to a request created via `URLRequest(url:mode:)`
-    /// or `URLSession.data(for:mode:)`, and before it is sent. Return the request to send (modified or not).
-    ///
-    /// Library-internal traffic (login, token refresh, analytics) does not pass through this method.
+    
+    /// Called when a token refresh fails. The result decides what happens to the session; defaults to `RefreshFlowFailedResult.default(for:)`.
+    func labsPlatformAuth(refreshFlowFailedWithError error: PlatformAuthFlowError, platform: LabsPlatform) -> RefreshFlowFailedResult
+    
+    // MARK: Requests
+    
+    /// Called after authorization headers are attached to a request created via `URLRequest(url:mode:)`. Return the request to use.
     func labsPlatformRequests(willSendRequest request: URLRequest, platform: LabsPlatform) -> URLRequest
-
-    /// Called when a request performed via `URLSession.data(for:mode:)` or `URLSession.data(from:mode:)` completes,
-    /// whether it succeeded or threw. Requests created with `URLRequest(url:mode:)` and sent by the app directly
-    /// do not report here, since the platform never sees their response.
-    func labsPlatformRequests(didCompleteRequest request: URLRequest, result: Result<(Data, URLResponse), any Error>, platform: LabsPlatform)
-
-    // MARK: Analytics-related Delegate Events
-
-    /// Called once per analytics push cycle in which at least one transaction failed to submit. Failed transactions
-    /// remain queued and are retried on the next cycle, so this is informational (e.g. for logging).
-    func labsPlatformAnalytics(pushFailedWithErrors errors: [any Error], platform: LabsPlatform)
+    
+    // MARK: Analytics
+    
+    /// Called once per push cycle in which at least one transaction failed. Failed transactions stay queued and are retried.
+    func labsPlatformAnalytics(pushFailedWithErrors errors: [PlatformAnalyticsError], platform: LabsPlatform)
 }
 
-/// What the platform should do after a failed token refresh.
+/// What the platform does after a failed token refresh.
 public enum RefreshFlowFailedResult: Sendable {
-    /// Keep the current credential and leave the session in `needsRefresh`. The next authenticated request will try to refresh again.
+    /// Keep the credential in `needsRefresh`; the next request after connectivity returns retries.
     case stayLoggedIn
-    /// Immediately retry the refresh request.
+    /// Retry now, up to `LabsPlatform.maxRefreshAttempts` times with a growing delay.
     case tryAgain
-    /// Discard the credential and transition to `loggedOut`.
+    /// Discard the credential and log out.
     case logOut
-
-    /// The platform's built-in policy, used when no delegate is set or the delegate does not implement
-    /// `labsPlatformAuth(refreshFlowFailedWithError:platform:)`.
-    public static func `default`(for error: any Error) -> RefreshFlowFailedResult {
+    
+    /// Stay logged in when the device is offline or the response was unreadable; log out otherwise.
+    public static func `default`(for error: PlatformAuthFlowError) -> RefreshFlowFailedResult {
         switch error {
-        case PlatformAuthError.noConnection:
-            // The user has no connection, so the refresh token is presumed still valid.
+        case .platformError(.noConnection), .decodingError:
             return .stayLoggedIn
-        case is DecodingError:
-            // Platform responded but with something we could not read; do not throw away a possibly-valid session.
-            return .stayLoggedIn
-        default:
+        case .platformError, .other:
             return .logOut
         }
     }
 }
 
-/// Errors raised while pushing analytics transactions.
+/// A login or refresh failure, classified so delegates can match on the common cases.
+public enum PlatformAuthFlowError: Error, Sendable {
+    case platformError(PlatformAuthError)
+    case decodingError(DecodingError)
+    case other(any Error)
+    
+    init(_ error: any Error) {
+        switch error {
+        case let error as PlatformAuthFlowError: self = error
+        case let error as PlatformAuthError: self = .platformError(error)
+        case let error as DecodingError: self = .decodingError(error)
+        default: self = .other(error)
+        }
+    }
+}
+
+/// A failure while pushing one analytics transaction.
 public enum PlatformAnalyticsError: Error, Sendable {
-    /// The transaction could not be encoded as JSON.
+    /// The request could not be authorized (e.g. not logged in, or offline with an expired token).
+    case platformError(PlatformError)
     case encodingFailed
-    /// The analytics endpoint returned a non-200 status code.
     case badStatusCode(Int)
-    /// The response could not be interpreted as an HTTP response.
     case invalidResponse
+    case other(any Error)
 }
 
 public extension LabsPlatformDelegate {
     func labsPlatformAuth(didUpdateLoggedInState state: (loggedIn: Bool, isDefaultLogin: Bool), platform: LabsPlatform) { }
-    func labsPlatformAuth(loginFlowFailedWithError error: any Error, platform: LabsPlatform) { }
+    func labsPlatformAuth(loginFlowFailedWithError error: PlatformAuthFlowError, platform: LabsPlatform) { }
     func labsPlatformAuth(didReceiveDefaultLoginCredentials credentials: (username: String, password: String), platform: LabsPlatform) -> Bool { true }
     func labsPlatformAuth(willPerformRefreshRequest request: URLRequest, platform: LabsPlatform) { }
-    func labsPlatformAuth(refreshFlowFailedWithError error: any Error, platform: LabsPlatform) -> RefreshFlowFailedResult { .default(for: error) }
-
+    func labsPlatformAuth(refreshFlowFailedWithError error: PlatformAuthFlowError, platform: LabsPlatform) -> RefreshFlowFailedResult { .default(for: error) }
+    
     func labsPlatformRequests(willSendRequest request: URLRequest, platform: LabsPlatform) -> URLRequest { request }
-    func labsPlatformRequests(didCompleteRequest request: URLRequest, result: Result<(Data, URLResponse), any Error>, platform: LabsPlatform) { }
-
-    func labsPlatformAnalytics(pushFailedWithErrors errors: [any Error], platform: LabsPlatform) { }
+    
+    func labsPlatformAnalytics(pushFailedWithErrors errors: [PlatformAnalyticsError], platform: LabsPlatform) { }
 }

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Combine
 import SwiftUI
 import SwiftData
 
@@ -14,13 +13,13 @@ public extension LabsPlatform {
     final actor Analytics: Sendable, ModelActor {
         public let modelContainer: ModelContainer
         public let modelExecutor: any ModelExecutor
-        
+
         public struct Configuration: Sendable {
             let endpoint: URL
             let pushInterval: TimeInterval
             let expireInterval: TimeInterval
             let bufferInterval: TimeInterval
-            
+
             public init(endpoint: URL = URL(string: "https://analytics.pennlabs.org/analytics/")!,
                         pushInterval: TimeInterval = 30,
                         expireInterval: TimeInterval = TimeInterval(60 * 60 * 24 * 7),
@@ -33,183 +32,163 @@ public extension LabsPlatform {
         }
 
         private var activeOperations: [AnalyticsTimedOperation] = []
-        private var dispatch: (any Cancellable)?
-        
+        private var isSubmitting = false
+
         let configuration: Analytics.Configuration
 
         init?(configuration: Analytics.Configuration? = Analytics.Configuration()) throws {
             guard let configuration else { return nil }
-            
-            self.modelContainer = try ModelContainer(for: AnalyticsTxn.self)
-            let context = ModelContext(modelContainer)
-            self.modelExecutor = DefaultSerialModelExecutor(modelContext: context)
-            
-            self.configuration = configuration
-            
-            let oldValues: [AnalyticsTxn] = try self.modelExecutor.modelContext.fetch(AnalyticsTxn.oldValuesFetchDescriptor(olderThan: Date.now.addingTimeInterval(-1 * configuration.expireInterval)))
-            for val in oldValues {
-                modelExecutor.modelContext.delete(val)
-            }
 
-            Task {
-                await startTimer()
+            self.modelContainer = try ModelContainer(for: AnalyticsTxn.self)
+            self.modelExecutor = DefaultSerialModelExecutor(modelContext: ModelContext(modelContainer))
+            self.configuration = configuration
+
+            let context = modelExecutor.modelContext
+            let expired = try context.fetch(AnalyticsTxn.oldValuesFetchDescriptor(olderThan: .now.addingTimeInterval(-configuration.expireInterval)))
+            expired.forEach(context.delete)
+            try context.save()
+
+            Task { [weak self, interval = configuration.pushInterval] in
+                while true {
+                    try? await Task.sleep(for: .seconds(interval))
+                    guard let self else { return }
+                    await self.submitQueue()
+                }
             }
         }
-            
-        private func startTimer() {
-            dispatch = DispatchQueue
-                .global(qos: .utility)
-                .schedule(after: .init(.now()),
-                          interval: .seconds(self.configuration.pushInterval),
-                          tolerance: .seconds(self.configuration.pushInterval / 5)) { [weak self] in
-                    guard let self else { return }
-                    Task {
-                        await self.submitQueue()
-                    }
-                }
-        }
-        
-        
+
         func record(_ value: AnalyticsValue) async {
             guard case .loggedIn(let auth) = await LabsPlatform.shared?.authState,
-                  let id = auth.idToken,
-                  let jwt = JWTUtilities.decodeJWT(id),
-                  let pennkey: String = jwt["pennkey"] as? String else {
+                  let idToken = auth.idToken,
+                  let pennkey = JWTUtilities.decodeJWT(idToken)?["pennkey"] as? String else {
                 return
             }
-            
-            let now = Date.now
-            
-            if let latest = try? self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()).sorted(by: { $0.timestamp > $1.timestamp }).first(where: { $0.data.contains(where: { $0.key == value.key }) }),
-               Date.now.timeIntervalSince1970 - Double(latest.timestamp) < self.configuration.bufferInterval {
-                // we already have a token within buffer, though this is a really expensive operation
+
+            let context = modelExecutor.modelContext
+            let latest = (try? context.fetch(AnalyticsTxn.allValuesFetchDescriptor()))?
+                .filter { $0.data.contains { $0.key == value.key } }
+                .max { $0.timestamp < $1.timestamp }
+            if let latest, Date.now.timeIntervalSince1970 - Double(latest.timestamp) < configuration.bufferInterval {
                 return
             }
-            
-            self.modelExecutor.modelContext.insert(AnalyticsTxn(pennkey: pennkey, timestamp: Date.now, data: [value]))
+
+            context.insert(AnalyticsTxn(pennkey: pennkey, timestamp: .now, data: [value]))
+            try? context.save()
         }
-        
-        func recordAndSubmit(_ value: AnalyticsValue) async throws {
+
+        func recordAndSubmit(_ value: AnalyticsValue) async {
             await record(value)
             await submitQueue()
         }
-        
+
         func addTimedOperation(_ operation: AnalyticsTimedOperation, removeDuplicates: Bool) {
             if removeDuplicates {
-                self.activeOperations.removeAll(where: { $0.fullKey == operation.fullKey })
+                activeOperations.removeAll { $0.fullKey == operation.fullKey }
             }
-            self.activeOperations.append(operation)
+            activeOperations.append(operation)
         }
-        
-        func completeTimedOperation(_ operation: AnalyticsTimedOperation) {
-            self.activeOperations.removeAll(where: {$0 == operation})
-            Task {
-                await record(await operation.finish())
-            }
+
+        /// Records the operation's duration only if it was still active.
+        func completeTimedOperation(_ operation: AnalyticsTimedOperation) async {
+            let count = activeOperations.count
+            activeOperations.removeAll { $0 == operation }
+            guard activeOperations.count < count else { return }
+            await record(operation.finish())
         }
-        
+
         func getTimedOperation(_ fullKey: String) -> AnalyticsTimedOperation? {
-            return self.activeOperations.first(where: {$0.fullKey == fullKey})
+            activeOperations.first { $0.fullKey == fullKey }
         }
-        
+
         func focusChanged(_ phase: ScenePhase) {
-            let toCancel = self.activeOperations.filter({ op in
-                return op.cancelOnScenePhase.contains(where: {$0 == phase})
-            })
-            
-            toCancel.forEach({ op in
-                Task {
-                    await op.cancel()
-                }
-            })
-            
-            self.activeOperations.removeAll(where: { el in
-                toCancel.contains(where: {$0 == el})
-            })
+            activeOperations.removeAll { $0.cancelOnScenePhase.contains(phase) }
         }
     }
 }
 
 extension LabsPlatform {
-    func notifyAnalyticsPushFailed(_ errors: [any Error]) {
-        self.delegate?.labsPlatformAnalytics(pushFailedWithErrors: errors, platform: self)
+    func notifyAnalyticsPushFailed(_ errors: [PlatformAnalyticsError]) {
+        delegate?.labsPlatformAnalytics(pushFailedWithErrors: errors, platform: self)
     }
 }
 
 // MARK: Network
 extension LabsPlatform.Analytics {
+    /// Posts every queued transaction. Concurrent calls while a push is in flight return immediately.
     func submitQueue() async {
-        guard let toSubmit = try? self.modelExecutor.modelContext.fetch(AnalyticsTxn.allValuesFetchDescriptor()),
-              !toSubmit.isEmpty else { return }
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
 
-        let statics = toSubmit.map({ StaticAnalyticsTxnDTO(from: $0) })
-        let (succeeded, errors) = await withTaskGroup(of: Result<StaticAnalyticsTxnDTO, any Error>.self) { group in
+        let context = modelExecutor.modelContext
+        guard let queued = try? context.fetch(AnalyticsTxn.allValuesFetchDescriptor()), !queued.isEmpty else { return }
+        let statics = queued.map(StaticAnalyticsTxnDTO.init(from:))
+
+        var submitted: Set<PersistentIdentifier> = []
+        var errors: [PlatformAnalyticsError] = []
+        await withTaskGroup(of: Result<PersistentIdentifier, PlatformAnalyticsError>.self) { group in
             for txn in statics {
                 group.addTask {
-                    do {
-                        try await self.analyticsPostRequest(txn)
-                        return .success(txn)
+                    do throws(PlatformAnalyticsError) {
+                        try await self.post(txn)
+                        return .success(txn.id)
                     } catch {
                         return .failure(error)
                     }
                 }
             }
-            
-            var success: [StaticAnalyticsTxnDTO] = []
-            var errors: [any Error] = []
-            for await res in group {
-                switch res {
-                case .success(let txn):
-                    success.append(txn)
-                case .failure(let error):
-                    errors.append(error)
+            for await outcome in group {
+                switch outcome {
+                case .success(let id): submitted.insert(id)
+                case .failure(let error): errors.append(error)
                 }
             }
-            return (success, errors)
         }
-        
-        let intersection = toSubmit.filter { live in
-            succeeded.contains(where: { $0.id == live.id })
+
+        for txn in queued where submitted.contains(txn.persistentModelID) {
+            context.delete(txn)
         }
-        for record in intersection {
-            self.modelExecutor.modelContext.delete(record)
-        }
-        
-        // Failed submissions stay in the queue and are retried next cycle; report them once per cycle.
+        try? context.save()
+
         if !errors.isEmpty, let platform = await LabsPlatform.shared {
             await platform.notifyAnalyticsPushFailed(errors)
         }
     }
-    
-    // throws on a failed submission (failed submissions should go back in the queue)
-    //
-    // another design decision: we're only collecting data from logged-in users here,
-    // though the analytics engine supports anonymous submissions
-    // (from logged in users from some reason)
-    private func analyticsPostRequest(_ txn: StaticAnalyticsTxnDTO) async throws {
+
+    private func post(_ txn: StaticAnalyticsTxnDTO) async throws(PlatformAnalyticsError) {
         guard let platform = await LabsPlatform.shared else {
-            throw PlatformError.platformNotEnabled
+            throw .platformError(.platformNotEnabled)
         }
-        // Internal traffic: bypasses the delegate's request hooks, failures are reported via the analytics hook instead.
-        var request = try await platform.authorizedURLRequest(url: self.configuration.endpoint, mode: .accessToken, notifyDelegate: false)
+
+        var request: URLRequest
+        do {
+            request = try await platform.authorizedURLRequest(url: configuration.endpoint, mode: .accessToken, notifyDelegate: false)
+        } catch let error as PlatformError {
+            throw .platformError(error)
+        } catch {
+            throw .other(error)
+        }
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let body = try? encoder.encode(txn) else {
+            throw .encodingFailed
+        }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let json = JSONEncoder()
-        json.keyEncodingStrategy = .convertToSnakeCase
- 
-        guard let data = try? json.encode(txn) else {
-            throw PlatformAnalyticsError.encodingFailed
+        request.httpBody = body
+
+        let response: URLResponse
+        do {
+            (_, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw .other(error)
         }
-        
-        request.httpBody = data
-        
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw PlatformAnalyticsError.invalidResponse
+        guard let http = response as? HTTPURLResponse else {
+            throw .invalidResponse
         }
-        guard httpResponse.statusCode == 200 else {
-            throw PlatformAnalyticsError.badStatusCode(httpResponse.statusCode)
+        guard http.statusCode == 200 else {
+            throw .badStatusCode(http.statusCode)
         }
     }
 }

@@ -7,314 +7,223 @@
 
 import Foundation
 import SwiftUI
+import AuthenticationServices
 
-
-
-// MARK: Platform Authentication
+// MARK: Login
 extension LabsPlatform {
-    /// Handles the authentication flow with Platform.
-    /// Defined in the scope of the `LabsPlatform` environment object created by [`View.enableLabsPlatform()`](x-source-tag://enableLabsPlatform)
-    ///
+    /// Starts the interactive Platform login. Does nothing while a login is already in progress.
     /// - Tag: loginWithPlatform
     public func loginWithPlatform() {
-        let phases: [() async throws -> PlatformAuthState] = [
-            prepareLogin,
-            fetchAccessCode,
-            fetchToken
-        ]
-        
-        Task { @MainActor in
-            self.globalLoading = true
-            // Hit the login URL to check for network status
-            // will throw if no network (or if Platform is down)
-            let request = URLRequest(url: URL(string: "https://platform.pennlabs.org/accounts/login/")!)
-            guard let (_,_) = try? await URLSession.shared.data(for: request) else {
-                self.globalLoading = false
-                self.alertText = "Unable to connect to the Penn Labs Platform. Are you connected to the internet?"
-                self.failLogin(with: PlatformAuthError.noConnection)
-                return
-            }
-            self.globalLoading = false
-            
-            do {
-                for phase in phases {
-                    self.authState = try await phase()
-                    if case .loggedOut = self.authState {
-                        break
-                    }
-                    
-                    // Correctly handle default login
-                    if case .loggedIn(_) = self.authState {
-                        break
-                    }
-                }
-            } catch {
-                self.failLogin(with: error)
-            }
-            
-            if case .loggedIn(_) = self.authState {
-                return
-            } else {
-                self.authState = .loggedOut
-            }
+        guard loginTask == nil else { return }
+        loginTask = Task {
+            defer { loginTask = nil }
+            await performLogin()
         }
     }
-    
-    /// Tells the client to log out of Platform and remove cached login credentials
-    /// and details (except for Analytic tokens, which will time out separately)
-    /// The delegate will always receive `labsPlatformAuth(didUpdateLoggedInState:platform:)` with `loggedIn == false`.
-    ///
+
+    /// Logs out, discards cached credentials and cookies, and cancels any in-flight login or refresh.
+    /// The delegate always receives `labsPlatformAuth(didUpdateLoggedInState:platform:)` with `loggedIn == false`.
     /// - Tag: logoutPlatform
     public func logoutPlatform() {
-        LabsKeychain.clearPlatformCredential()
-        LabsKeychain.deletePennkey()
-        LabsKeychain.deletePassword()
+        loginTask?.cancel()
+        refreshTask?.cancel()
         UserDefaults.standard.clearPlatformHTTPCookies()
         HTTPCookieStorage.shared.removeCookies(since: .distantPast)
-        DispatchQueue.main.async {
-            self.authState = .loggedOut
-        }
+        authState = .loggedOut
     }
-    
-    
-// MARK: Top-level Auth Flow Functions
-    func prepareLogin() throws -> PlatformAuthState {
-        let verifier: String = AuthUtilities.codeVerifier()
-        let state: String = AuthUtilities.stateString()
-        guard let url = URL(string:
-                                "\(configuration.authEndpoint.absoluteString)?response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(self.clientId)&redirect_uri=\(self.authRedirect)&scope=openid%20read%20introspection&state=\(state)") else { throw PlatformAuthError.invalidUrl }
-        return .newLogin(url: url, state: state, verifier: verifier)
-    }
-    
-    func fetchAccessCode() async throws -> PlatformAuthState {
-        guard case .newLogin(let url, let state, let verifier) = self.authState,
-              let authRedirectUrl = URL(string: self.authRedirect),
-              let scheme = authRedirectUrl.scheme else {
-            throw PlatformAuthError.illegalState
+
+    private func performLogin() async {
+        globalLoading = true
+        guard await platformIsReachable() else {
+            globalLoading = false
+            failLogin(with: PlatformAuthError.noConnection)
+            return
         }
-        
-        
-        let result: Result<URL, any Error>
+        globalLoading = false
+
         do {
-            
-            guard let url = try await self.webAuthenticationSession?.authenticate(using: url, callback: .customScheme(scheme), additionalHeaderFields: [:]) else {
-                throw PlatformAuthError.invalidCallback
+            let (url, state, verifier) = try prepareLogin()
+            authState = .newLogin(url: url, state: state, verifier: verifier)
+            let callback = try await authenticate(at: url)
+            try Task.checkCancellation()
+
+            switch try parseCallback(callback, expectedState: state) {
+            case .defaultLogin:
+                let credentials = (username: configuration.defaultAccount, password: configuration.defaultPassword)
+                let accepted = delegate?.labsPlatformAuth(didReceiveDefaultLoginCredentials: credentials, platform: self) ?? true
+                authState = accepted ? .loggedIn(auth: .defaultValue) : .loggedOut
+            case .authorizationCode(let code):
+                authState = .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier)
+                authState = .loggedIn(auth: try await fetchToken(authorizationCode: code, verifier: verifier))
             }
-            result = .success(url)
+        } catch is CancellationError {
+            authState = .loggedOut
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            authState = .loggedOut
         } catch {
-            result = .failure(error)
+            failLogin(with: error)
         }
-        return try urlCallbackFunction(callbackResult: result)
     }
-    
-    func fetchToken() async throws -> PlatformAuthState {
-        guard case .codeAcquired(let authCode, let verifier) = self.authState else {
+
+    private func platformIsReachable() async -> Bool {
+        (try? await URLSession.shared.data(for: URLRequest(url: configuration.authEndpoint))) != nil
+    }
+
+    private func prepareLogin() throws -> (url: URL, state: String, verifier: String) {
+        let verifier = AuthUtilities.codeVerifier()
+        let state = AuthUtilities.stateString()
+        let query = "response_type=code&code_challenge=\(AuthUtilities.codeChallenge(from: verifier))&code_challenge_method=S256&client_id=\(clientId)&redirect_uri=\(authRedirect)&scope=openid%20read%20introspection&state=\(state)"
+        guard let url = URL(string: "\(configuration.authEndpoint.absoluteString)?\(query)") else {
+            throw PlatformAuthError.invalidUrl
+        }
+        return (url, state, verifier)
+    }
+
+    private func authenticate(at url: URL) async throws -> URL {
+        guard let session = webAuthenticationSession, let scheme = URL(string: authRedirect)?.scheme else {
             throw PlatformAuthError.illegalState
         }
-        
-        let parameters: [String: String] = [
-            "grant_type": "authorization_code",
-            "code": authCode.authCode,
-            "redirect_uri": "\(self.authRedirect)",
-            "client_id": self.clientId,
-            "code_verifier": verifier,
-        ]
-        
-        let req = await tokenPostRequest(parameters)
-        if case .failure(let error) = req {
-            throw error
-        }
-        
-        guard case .success(let data) = req else {
-            throw PlatformAuthError.illegalState
-        }
-        
-        return .loggedIn(auth: data)
+        return try await session.authenticate(using: url, callback: .customScheme(scheme), additionalHeaderFields: [:])
     }
-    
-    func cancelLogin() {
-        self.authState = .loggedOut
-    }
-    
-    /// Reports a login failure to the delegate, then logs out.
-    func failLogin(with error: any Error) {
-        self.delegate?.labsPlatformAuth(loginFlowFailedWithError: error, platform: self)
-        self.authState = .loggedOut
-    }
-    
-    func completeDefaultLogin() {
-        self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
-    }
-    
-// MARK: Other functions
-    func urlCallbackFunction(callbackResult: Result<URL, any Error>) throws -> PlatformAuthState {
-        if case .loggedIn(_) = self.authState {
-            return self.authState
-        }
-        
-        guard case .success(let url) = callbackResult,
-              case .newLogin(_, let currentState, let verifier) = self.authState,
-              let comps = URLComponents(string: url.absoluteString) else {
-            // loginWithPlatform catches this and reports it to the delegate before logging out
+
+    private func parseCallback(_ url: URL, expectedState: String) throws -> LoginCallback {
+        guard let items = URLComponents(string: url.absoluteString)?.queryItems else {
             throw PlatformAuthError.invalidCallback
         }
-        
-        // A `defaultlogin=true` callback means the App Store review credentials were used.
-        // The delegate decides whether to accept them; there is no real Platform credential in this case.
-        if comps.queryItems?.first(where: { $0.name == "defaultlogin" })?.value == "true" {
-            let credentials = (username: configuration.defaultAccount, password: configuration.defaultPassword)
-            let accepted = self.delegate?.labsPlatformAuth(didReceiveDefaultLoginCredentials: credentials, platform: self) ?? true
-            return accepted ? .loggedIn(auth: PlatformAuthCredentials.defaultValue) : .loggedOut
+        if items.first(where: { $0.name == "defaultlogin" })?.value == "true" {
+            return .defaultLogin
         }
-        
-        if comps.queryItems?.contains(where: { $0.name == "error" }) == true {
-            self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
+        if items.contains(where: { $0.name == "error" }) {
             throw PlatformAuthError.authorizationDenied
         }
-        
-        guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
-              let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
-              currentState == state else {
-            // loginWithPlatform catches this and reports it to the delegate before logging out
+        guard let code = items.first(where: { $0.name == "code" })?.value,
+              items.first(where: { $0.name == "state" })?.value == expectedState else {
             throw PlatformAuthError.invalidCallback
         }
-        
-        return .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier)
+        return .authorizationCode(code)
     }
-    
-// MARK: Setup + Refresh
-    func getCurrentAuthState() -> PlatformAuthState {
-        let credential: PlatformAuthCredentials
-        if case .loggedIn(let cred) = self.authState {
-            credential = cred
-        } else if let cred = LabsKeychain.loadPlatformCredential() {
-                credential = cred
-        } else {
-                return .loggedOut
-        }
-        
-        if credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) < Date.now {
-            return .needsRefresh(auth: credential)
-        } else {
-            return .loggedIn(auth: credential)
-        }
+
+    private func failLogin(with error: any Error) {
+        delegate?.labsPlatformAuth(loginFlowFailedWithError: PlatformAuthFlowError(error), platform: self)
+        authState = .loggedOut
     }
-    
-    @MainActor func getRefreshedAuthState() async -> PlatformAuthState {
-        if let task = self.refreshTask {
-            return await task.value
-        }
-        
-        let state = self.getCurrentAuthState()
-        
-        if case .needsRefresh(let auth) = state {
-            self.refreshTask = Task {
-                var attempts = 0
-                while true {
-                    attempts += 1
-                    switch await self.tokenRefresh(auth) {
-                    case .success(let newCredential):
-                        LabsKeychain.savePlatformCredential(newCredential)
-                        return .loggedIn(auth: newCredential)
-                    case .failure(let error):
-                        let result = self.delegate?.labsPlatformAuth(refreshFlowFailedWithError: error, platform: self)
-                            ?? RefreshFlowFailedResult.default(for: error)
-                        switch result {
-                        case .stayLoggedIn:
-                            return .needsRefresh(auth: auth)
-                        case .logOut:
-                            return .loggedOut
-                        case .tryAgain:
-                            if attempts >= LabsPlatform.maxRefreshAttempts {
-                                return .loggedOut
-                            }
-                        }
-                    }
-                }
-            }
-            self.authState = await self.refreshTask!.value
-            self.refreshTask = nil
-        }
-        return self.getCurrentAuthState()
-    }
-    
-    
 }
 
-// MARK: Internal Network Requests
+private enum LoginCallback {
+    case authorizationCode(String)
+    case defaultLogin
+}
+
+// MARK: Refresh
 extension LabsPlatform {
-    func tokenPostRequest(_ parameters: [String:String]) async -> Result<PlatformAuthCredentials, any Error> {
-        let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
-        let postString = parameterArray.joined(separator: "&")
-        
-        let postData =  postString.data(using: .utf8)
-
-        var request = URLRequest(url: configuration.tokenEndpoint)
-        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpMethod = "POST"
-        request.httpBody = postData
-
-        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            return .failure(CancellationError())
+    func getCurrentAuthState() -> PlatformAuthState {
+        let credential: PlatformAuthCredentials?
+        switch authState {
+        case .loggedIn(let auth), .needsRefresh(let auth):
+            credential = auth
+        default:
+            credential = LabsKeychain.loadPlatformCredential()
         }
-        
-        let json = JSONDecoder()
-        json.keyDecodingStrategy = .convertFromSnakeCase
-        
-        guard let data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
-            return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
-        }
-        
-        return .success(data)
+        guard let credential else { return .loggedOut }
+        let expired = credential.issuedAt.addingTimeInterval(TimeInterval(credential.expiresIn)) < .now
+        return expired ? .needsRefresh(auth: credential) : .loggedIn(auth: credential)
     }
-    
-    func tokenRefresh(_ auth: PlatformAuthCredentials) async -> Result<PlatformAuthCredentials, any Error> {
-        let parameters: [String: String] = [
-            "grant_type": "refresh_token",
-            "refresh_token": auth.refreshToken,
-            "client_id": self.clientId
-        ]
-        let parameterArray = parameters.map { "\($0.key)=\($0.value)" }
-        let postString = parameterArray.joined(separator: "&")
-        
-        let postData =  postString.data(using: .utf8)
-        
+
+    /// Refreshes an expired credential, sharing one in-flight refresh between concurrent callers.
+    /// Skips the network entirely while the device is offline.
+    func getRefreshedAuthState() async -> PlatformAuthState {
+        if refreshTask == nil, case .needsRefresh(let auth) = getCurrentAuthState(), isNetworkAvailable {
+            refreshTask = Task {
+                defer { refreshTask = nil }
+                let result = await refresh(auth)
+                switch authState {
+                case .loggedIn(auth), .needsRefresh(auth):
+                    authState = result
+                default:
+                    break
+                }
+            }
+        }
+        await refreshTask?.value
+        return getCurrentAuthState()
+    }
+
+    private func refresh(_ auth: PlatformAuthCredentials) async -> PlatformAuthState {
+        for attempt in 1...Self.maxRefreshAttempts {
+            do {
+                let credential = try await refreshToken(auth)
+                return Task.isCancelled ? .loggedOut : .loggedIn(auth: credential)
+            } catch {
+                guard !Task.isCancelled else { return .loggedOut }
+                let flowError = PlatformAuthFlowError(error)
+                switch delegate?.labsPlatformAuth(refreshFlowFailedWithError: flowError, platform: self) ?? .default(for: flowError) {
+                case .stayLoggedIn:
+                    return .needsRefresh(auth: auth)
+                case .logOut:
+                    return .loggedOut
+                case .tryAgain:
+                    try? await Task.sleep(for: .seconds(attempt))
+                }
+            }
+        }
+        return .loggedOut
+    }
+}
+
+// MARK: Token Requests
+extension LabsPlatform {
+    func fetchToken(authorizationCode: String, verifier: String) async throws -> PlatformAuthCredentials {
+        let request = tokenRequest(
+            URLQueryItem(name: "grant_type", value: "authorization_code"),
+            URLQueryItem(name: "code", value: authorizationCode),
+            URLQueryItem(name: "redirect_uri", value: authRedirect),
+            URLQueryItem(name: "client_id", value: clientId),
+            URLQueryItem(name: "code_verifier", value: verifier))
+        return try await sendTokenRequest(request)
+    }
+
+    func refreshToken(_ auth: PlatformAuthCredentials) async throws -> PlatformAuthCredentials {
+        let request = tokenRequest(
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: auth.refreshToken),
+            URLQueryItem(name: "client_id", value: clientId))
+        delegate?.labsPlatformAuth(willPerformRefreshRequest: request, platform: self)
+
+        let refreshed = try await sendTokenRequest(request)
+        guard refreshed.idToken == nil else { return refreshed }
+        return PlatformAuthCredentials(
+            accessToken: refreshed.accessToken,
+            expiresIn: refreshed.expiresIn,
+            tokenType: refreshed.tokenType,
+            refreshToken: refreshed.refreshToken,
+            idToken: auth.idToken,
+            issuedAt: refreshed.issuedAt)
+    }
+
+    private func tokenRequest(_ fields: URLQueryItem...) -> URLRequest {
+        var components = URLComponents()
+        components.queryItems = fields
         var request = URLRequest(url: configuration.tokenEndpoint)
-        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpMethod = "POST"
-        request.httpBody = postData
-        
-        self.delegate?.labsPlatformAuth(willPerformRefreshRequest: request, platform: self)
-        
-        guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-            return .failure(PlatformAuthError.noConnection)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        return request
+    }
+
+    private func sendTokenRequest(_ request: URLRequest) async throws -> PlatformAuthCredentials {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw PlatformAuthError.noConnection
         }
-        
-        guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            return .failure(PlatformAuthError.invalidSession)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw PlatformAuthError.invalidSession
         }
-        
-        let json = JSONDecoder()
-        json.keyDecodingStrategy = .convertFromSnakeCase
-        
-        guard let data = try? json.decode(PlatformAuthCredentials.self, from: data) else {
-            return .failure(DecodingError.valueNotFound(PlatformAuthCredentials.self, DecodingError.Context(codingPath: [], debugDescription: "Could not decode credentials")))
-        }
-        
-        if let idToken = data.idToken {
-            return .success(data)
-        } else {
-            // specifically retain the ID token from initial auth (if available)
-            
-            let combinedToken = PlatformAuthCredentials(
-                accessToken: data.accessToken,
-                expiresIn: data.expiresIn,
-                tokenType: data.tokenType,
-                refreshToken: data.refreshToken,
-                idToken: auth.idToken,
-                issuedAt: data.issuedAt)
-            return .success(combinedToken)
-        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(PlatformAuthCredentials.self, from: data)
     }
 }
 
@@ -324,7 +233,7 @@ extension LabsPlatform {
         guard let token = LabsKeychain.loadPlatformCredential() else {
             return
         }
-        
+
         let newToken = PlatformAuthCredentials(accessToken: token.accessToken,
                                                expiresIn: token.expiresIn,
                                                tokenType: token.tokenType,
@@ -358,7 +267,7 @@ struct PlatformAuthCredentials: Codable, Equatable {
     let refreshToken: String
     let idToken: String?
     let issuedAt: Date
-    
+
     init(accessToken: String, expiresIn: Int, tokenType: String, refreshToken: String, idToken: String?, issuedAt: Date) {
         self.tokenType = tokenType
         self.idToken = idToken
@@ -367,7 +276,7 @@ struct PlatformAuthCredentials: Codable, Equatable {
         self.issuedAt = issuedAt
         self.refreshToken = refreshToken
     }
-    
+
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.accessToken = try container.decode(String.self, forKey: .accessToken)
@@ -375,12 +284,12 @@ struct PlatformAuthCredentials: Codable, Equatable {
         self.tokenType = try container.decode(String.self, forKey: .tokenType)
         self.refreshToken = try container.decode(String.self, forKey: .refreshToken)
         self.idToken = try? container.decode(String.self, forKey: .idToken)
-        
+
         // IssuedAt time calculated this way because an auth credential can also be decoded from Keychain
         // and doing so would cause the date to change. This way, we use the date in the struct unless it doesn't exist.
         self.issuedAt = (try? container.decode(Date.self, forKey: .issuedAt)) ?? Date.now
     }
-    
+
     static let defaultValue: PlatformAuthCredentials = .init(
         accessToken: "root",
         expiresIn: 2592000, // 30 days
@@ -389,9 +298,6 @@ struct PlatformAuthCredentials: Codable, Equatable {
         idToken: "",
         issuedAt: Date.now
     )
-    
-    
-    
 }
 
 enum PlatformAuthState: Equatable, CustomDebugStringConvertible, Sendable {
@@ -401,23 +307,23 @@ enum PlatformAuthState: Equatable, CustomDebugStringConvertible, Sendable {
             "Idle"
         case .loggedOut:
             "Logged Out"
-        case .newLogin(url: let url, state: let state, verifier: let verifier):
+        case .newLogin:
             "Starting new login"
-        case .codeAcquired(result: let result, verifier: let verifier):
+        case .codeAcquired:
             "Acquired authorization code"
-        case .refreshing(state: let state):
+        case .refreshing:
             "Refreshing access token"
-        case .needsRefresh(auth: let auth):
+        case .needsRefresh:
             "Current access token expired, needs refresh"
-        case .loggedIn(auth: let auth):
+        case .loggedIn:
             "Logged in"
         }
     }
-    
+
     static func == (lhs: PlatformAuthState, rhs: PlatformAuthState) -> Bool {
         return lhs.debugDescription == rhs.debugDescription
     }
-    
+
     case idle
     case loggedOut
     case newLogin(url: URL, state: String, verifier: String)
@@ -425,19 +331,34 @@ enum PlatformAuthState: Equatable, CustomDebugStringConvertible, Sendable {
     case refreshing(state: String)
     case needsRefresh(auth: PlatformAuthCredentials)
     case loggedIn(auth: PlatformAuthCredentials)
-    
-    
 }
 
-enum PlatformAuthError: Int, Error  {
+public enum PlatformAuthError: Int, LocalizedError, Sendable {
     case invalidUrl = 0
     case invalidCallback = 1
     case illegalState = 2
     case authTimeout = 3
     case invalidSession = 4
     case noConnection = 5
-    /// Platform redirected back with an `error` query item (e.g. the user denied consent or the client is misconfigured).
+    /// Platform redirected back with an `error` query item (consent denied or client misconfigured).
     case authorizationDenied = 6
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidUrl, .illegalState:
+            "The Penn Labs Platform login could not be started."
+        case .invalidCallback:
+            "The Penn Labs Platform returned an invalid login response."
+        case .authTimeout:
+            "The Penn Labs Platform login timed out."
+        case .invalidSession:
+            "Your Penn Labs Platform session is no longer valid."
+        case .noConnection:
+            "Unable to connect to the Penn Labs Platform. Are you connected to the internet?"
+        case .authorizationDenied:
+            "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
+        }
+    }
 }
 
 struct AuthCompletionResult {
