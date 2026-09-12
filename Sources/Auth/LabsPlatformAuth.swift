@@ -39,12 +39,12 @@ extension LabsPlatform {
             do {
                 for phase in phases {
                     self.authState = try await phase()
-                    if case .loggedOut = await self.authState {
+                    if case .loggedOut = self.authState {
                         break
                     }
                     
                     // Correctly handle default login
-                    if case .loggedIn(_) = await self.authState {
+                    if case .loggedIn(_) = self.authState {
                         break
                     }
                 }
@@ -62,7 +62,7 @@ extension LabsPlatform {
     
     /// Tells the client to log out of Platform and remove cached login credentials
     /// and details (except for Analytic tokens, which will time out separately)
-    /// Will always run the `loginHandler` function with the boolean argument being `false`.
+    /// The delegate will always receive `labsPlatformAuth(didUpdateLoggedInState:platform:)` with `loggedIn == false`.
     ///
     /// - Tag: logoutPlatform
     public func logoutPlatform() {
@@ -87,15 +87,24 @@ extension LabsPlatform {
     }
     
     func fetchAccessCode() async throws -> PlatformAuthState {
-        guard case .newLogin(let url, let state, let verifier) = self.authState else {
+        guard case .newLogin(let url, let state, let verifier) = self.authState,
+              let authRedirectUrl = URL(string: self.authRedirect),
+              let scheme = authRedirectUrl.scheme else {
             throw PlatformAuthError.illegalState
         }
         
-        return try await withCheckedThrowingContinuation { continuation in
-            Task { @MainActor in
-                self.authWebViewState = .enabled(url: url, continuation: continuation)
+        
+        let result: Result<URL, any Error>
+        do {
+            
+            guard let url = try await self.webAuthenticationSession?.authenticate(using: url, callback: .customScheme(scheme), additionalHeaderFields: [:]) else {
+                throw PlatformAuthError.invalidCallback
             }
+            result = .success(url)
+        } catch {
+            result = .failure(error)
         }
+        return try urlCallbackFunction(callbackResult: result)
     }
     
     func fetchToken() async throws -> PlatformAuthState {
@@ -138,56 +147,39 @@ extension LabsPlatform {
     }
     
 // MARK: Other functions
-    func urlCallbackFunction(callbackResult: Result<URL, any Error>) {
-        guard case let .enabled(url, continuation) = self.authWebViewState else { return }
-        
+    func urlCallbackFunction(callbackResult: Result<URL, any Error>) throws -> PlatformAuthState {
         if case .loggedIn(_) = self.authState {
-            continuation.resume(returning: self.authState)
-            self.authWebViewState = .disabled
-            return
+            return self.authState
         }
         
         guard case .success(let url) = callbackResult,
               case .newLogin(_, let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString) else {
             // loginWithPlatform catches this and reports it to the delegate before logging out
-            self.authWebViewState = .disabled
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
-            return
+            throw PlatformAuthError.invalidCallback
         }
         
-        if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
-           defaultLogin == "true" {
+        // A `defaultlogin=true` callback means the App Store review credentials were used.
+        // The delegate decides whether to accept them; there is no real Platform credential in this case.
+        if comps.queryItems?.first(where: { $0.name == "defaultlogin" })?.value == "true" {
             let credentials = (username: configuration.defaultAccount, password: configuration.defaultPassword)
             let accepted = self.delegate?.labsPlatformAuth(didReceiveDefaultLoginCredentials: credentials, platform: self) ?? true
-            if accepted {
-                self.completeDefaultLogin()
-            } else {
-                self.cancelLogin()
-            }
-            continuation.resume(returning: self.authState)
-            self.authWebViewState = .disabled
-            return
+            return accepted ? .loggedIn(auth: PlatformAuthCredentials.defaultValue) : .loggedOut
         }
         
-        if let _ = comps.queryItems?.first(where: {$0.name == "error"})?.value {
+        if comps.queryItems?.contains(where: { $0.name == "error" }) == true {
             self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
-            self.authWebViewState = .disabled
-            continuation.resume(throwing: PlatformAuthError.authorizationDenied)
-            return
+            throw PlatformAuthError.authorizationDenied
         }
         
         guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
-            self.authWebViewState = .disabled
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
-            return
+            // loginWithPlatform catches this and reports it to the delegate before logging out
+            throw PlatformAuthError.invalidCallback
         }
         
-        continuation.resume(returning: .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier))
-        self.authWebViewState = .disabled
-        return
+        return .codeAcquired(result: AuthCompletionResult(authCode: code, state: state), verifier: verifier)
     }
     
 // MARK: Setup + Refresh

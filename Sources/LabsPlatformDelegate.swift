@@ -30,7 +30,7 @@ public protocol LabsPlatformDelegate: AnyObject {
     /// The platform always transitions to `loggedOut` after this call.
     func labsPlatformAuth(loginFlowFailedWithError error: any Error, platform: LabsPlatform)
 
-    /// Called when the login web view intercepts the default (App Store review) credentials.
+    /// Called when the login callback reports the default (App Store review) credentials (a `defaultlogin=true` query item on the redirect).
     ///
     /// - Returns: `true` to accept the default login and enter a logged-in state with `isDefaultLogin == true`;
     ///            `false` to reject it, which cancels the login and leaves the platform logged out. Defaults to `true`.

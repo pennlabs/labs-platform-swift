@@ -127,7 +127,7 @@ public enum PlatformError: Int, LocalizedError {
     case platformNotEnabled = -1
     
     public var errorDescription: String? {
-        switch self {
+        let baseStr = switch self {
         case .notLoggedIn:
             "Your login credentials are invalid (or you are not logged in)."
         case .jwtNotFound:
@@ -135,6 +135,8 @@ public enum PlatformError: Int, LocalizedError {
         case .platformNotEnabled:
             "Connection to the Penn Labs Platform is not correctly configured."
         }
+        
+        return "\(baseStr) [error code \(self.rawValue)]"
     }
 }
 

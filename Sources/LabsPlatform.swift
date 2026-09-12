@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import AuthenticationServices
 
 @MainActor
 public final class LabsPlatform: ObservableObject {
@@ -35,11 +36,9 @@ public final class LabsPlatform: ObservableObject {
     public private(set) static var shared: LabsPlatform?
     
     @Published var analytics: Analytics?
-    @Published var webViewUrl: URL?
     @Published var authState: PlatformAuthState = .idle {
         didSet { authStateDidChange(from: oldValue) }
     }
-    @Published var authWebViewState: AuthWebViewState = .disabled
     @Published var alertText: String? = nil
     @Published var globalLoading = false
     
@@ -49,6 +48,7 @@ public final class LabsPlatform: ObservableObject {
     let configuration: Configuration
     
     var refreshTask: Task<PlatformAuthState, Never>? = nil
+    var webAuthenticationSession: WebAuthenticationSession? = nil
     
     /// How many times a `RefreshFlowFailedResult.tryAgain` from the delegate is honored before the platform logs out.
     public static let maxRefreshAttempts = 3
@@ -131,17 +131,20 @@ public final class LabsPlatform: ObservableObject {
             return
         }
         
-        self.authWebViewState = .disabled
-        
         if let state = loggedInState(for: authState) {
             delegate?.labsPlatformAuth(didUpdateLoggedInState: state, platform: self)
         }
+    }
+    
+    internal func setWebAuthenticationSession(_ session: WebAuthenticationSession) {
+        self.webAuthenticationSession = session
     }
 }
 
 struct PlatformProvider<Content: View>: View {
     @ObservedObject var platform: LabsPlatform
     @Environment(\.scenePhase) var scenePhase
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     let content: Content
     let analyticsRoot: String
     
@@ -160,19 +163,6 @@ struct PlatformProvider<Content: View>: View {
     
 
     var body: some View {
-        let authURL = Binding<URL?>(get: {
-            if case let .enabled(url, _) = platform.authWebViewState {
-                return url
-            }
-            return nil
-        }) { new in
-            if case .enabled(_, _) = platform.authWebViewState {
-                if new == nil {
-                    platform.cancelLogin()
-                }
-            }
-        }
-        
         let showAlert = Binding(get: { platform.alertText != nil }) { new in
             if platform.alertText != nil && !new {
                 platform.alertText = nil
@@ -197,34 +187,15 @@ struct PlatformProvider<Content: View>: View {
             .alert(isPresented: showAlert) {
                 Alert(title: Text("Error"), message: Text(platform.alertText ?? "There was an error."))
             }
-            .sheet(item: authURL) { url in
-                ZStack {
-                    HStack {
-                        Spacer()
-                        Text("PennKey Login")
-                            .bold()
-                            .padding(.vertical, 24)
-                            .padding(.horizontal)
-                        Spacer()
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Cancel") {
-                            platform.cancelLogin()
-                        }
-                        .padding(.vertical, 24)
-                        .padding(.horizontal)
-                    }
-                }
-                .background(.thickMaterial)
-                AuthWebView(url: url, redirect: platform.authRedirect, callback: platform.urlCallbackFunction)
-            }
-            .onChange(of: scenePhase) { _ in
+            .onChange(of: scenePhase) {
                 DispatchQueue.main.async {
                     Task {
                         await platform.analytics?.focusChanged(scenePhase)
                     }
                 }
+            }
+            .onAppear {
+                self.platform.setWebAuthenticationSession(webAuthenticationSession)
             }
         }
 }
