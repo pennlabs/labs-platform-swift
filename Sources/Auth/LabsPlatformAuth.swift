@@ -30,8 +30,8 @@ extension LabsPlatform {
             let request = URLRequest(url: URL(string: "https://platform.pennlabs.org/accounts/login/")!)
             guard let (_,_) = try? await URLSession.shared.data(for: request) else {
                 self.globalLoading = false
-                self.authState = .loggedOut
                 self.alertText = "Unable to connect to the Penn Labs Platform. Are you connected to the internet?"
+                self.failLogin(with: PlatformAuthError.noConnection)
                 return
             }
             self.globalLoading = false
@@ -49,10 +49,10 @@ extension LabsPlatform {
                     }
                 }
             } catch {
-                self.authState = .loggedOut
+                self.failLogin(with: error)
             }
             
-            if case .loggedIn(let credential) = self.authState {
+            if case .loggedIn(_) = self.authState {
                 return
             } else {
                 self.authState = .loggedOut
@@ -127,6 +127,12 @@ extension LabsPlatform {
         self.authState = .loggedOut
     }
     
+    /// Reports a login failure to the delegate, then logs out.
+    func failLogin(with error: any Error) {
+        self.delegate?.labsPlatformAuth(loginFlowFailedWithError: error, platform: self)
+        self.authState = .loggedOut
+    }
+    
     func completeDefaultLogin() {
         self.authState = .loggedIn(auth: PlatformAuthCredentials.defaultValue)
     }
@@ -144,34 +150,38 @@ extension LabsPlatform {
         guard case .success(let url) = callbackResult,
               case .newLogin(_, let currentState, let verifier) = self.authState,
               let comps = URLComponents(string: url.absoluteString) else {
-            self.cancelLogin()
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
+            // loginWithPlatform catches this and reports it to the delegate before logging out
             self.authWebViewState = .disabled
+            continuation.resume(throwing: PlatformAuthError.invalidCallback)
             return
         }
         
         if let defaultLogin = comps.queryItems?.first(where: {$0.name == "defaultlogin"})?.value,
            defaultLogin == "true" {
-            self.completeDefaultLogin()
+            let credentials = (username: configuration.defaultAccount, password: configuration.defaultPassword)
+            let accepted = self.delegate?.labsPlatformAuth(didReceiveDefaultLoginCredentials: credentials, platform: self) ?? true
+            if accepted {
+                self.completeDefaultLogin()
+            } else {
+                self.cancelLogin()
+            }
             continuation.resume(returning: self.authState)
             self.authWebViewState = .disabled
             return
         }
         
         if let _ = comps.queryItems?.first(where: {$0.name == "error"})?.value {
-            self.cancelLogin()
-            continuation.resume(returning: PlatformAuthState.loggedOut)
-            self.authWebViewState = .disabled
             self.alertText = "Unable to login to the Penn Labs Platform. Check your client configuration and try again."
+            self.authWebViewState = .disabled
+            continuation.resume(throwing: PlatformAuthError.authorizationDenied)
             return
         }
         
         guard let code = comps.queryItems?.first(where: { $0.name == "code"})?.value,
               let state = comps.queryItems?.first(where: {$0.name == "state"})?.value,
               currentState == state else {
-            self.cancelLogin()
-            continuation.resume(throwing: PlatformAuthError.invalidCallback)
             self.authWebViewState = .disabled
+            continuation.resume(throwing: PlatformAuthError.invalidCallback)
             return
         }
         
@@ -207,26 +217,28 @@ extension LabsPlatform {
         
         if case .needsRefresh(let auth) = state {
             self.refreshTask = Task {
-                switch await self.tokenRefresh(auth) {
-                case .success(let newCredential):
-                    LabsKeychain.savePlatformCredential(newCredential)
-                    return .loggedIn(auth: newCredential)
-                case .failure(let error):
-                    if let e = error as? PlatformAuthError {
-                        switch e.rawValue {
-                            // If the user has no connection, we can assume that their
-                            // Refresh is still valid, they just couldn't refresh
-                        case PlatformAuthError.noConnection.rawValue:
+                var attempts = 0
+                while true {
+                    attempts += 1
+                    switch await self.tokenRefresh(auth) {
+                    case .success(let newCredential):
+                        LabsKeychain.savePlatformCredential(newCredential)
+                        return .loggedIn(auth: newCredential)
+                    case .failure(let error):
+                        let result = self.delegate?.labsPlatformAuth(refreshFlowFailedWithError: error, platform: self)
+                            ?? RefreshFlowFailedResult.default(for: error)
+                        switch result {
+                        case .stayLoggedIn:
                             return .needsRefresh(auth: auth)
-                        default:
+                        case .logOut:
                             return .loggedOut
+                        case .tryAgain:
+                            if attempts >= LabsPlatform.maxRefreshAttempts {
+                                return .loggedOut
+                            }
                         }
                     }
-                    if let e = error as? DecodingError {
-                        return state
-                    }
                 }
-                return self.getCurrentAuthState()
             }
             self.authState = await self.refreshTask!.value
             self.refreshTask = nil
@@ -279,6 +291,8 @@ extension LabsPlatform {
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpMethod = "POST"
         request.httpBody = postData
+        
+        self.delegate?.labsPlatformAuth(willPerformRefreshRequest: request, platform: self)
         
         guard let (data, response) = try? await URLSession.shared.data(for: request) else {
             return .failure(PlatformAuthError.noConnection)
@@ -430,6 +444,8 @@ enum PlatformAuthError: Int, Error  {
     case authTimeout = 3
     case invalidSession = 4
     case noConnection = 5
+    /// Platform redirected back with an `error` query item (e.g. the user denied consent or the client is misconfigured).
+    case authorizationDenied = 6
 }
 
 struct AuthCompletionResult {

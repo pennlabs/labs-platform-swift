@@ -115,7 +115,8 @@ class AuthNavigationDelegate: NSObject, WKNavigationDelegate {
                 if let pennkey = try? await webView.evaluateJavaScript("document.querySelector('input[name=j_username]').value;") as? String,
                    let password = try? await webView.evaluateJavaScript("document.querySelector('input[name=j_password]').value;") as? String,
                    !(pennkey.isEmpty || password.isEmpty) {
-                    if pennkey == "root" && password == "root" {
+                    let configuration = LabsPlatform.shared?.configuration
+                    if pennkey == configuration?.defaultAccount && password == configuration?.defaultPassword {
                         // Indicate the default login using a query parameter
                         // This makes it so the default login is handled elsewhere
                         parent.completion(.success(URL(string: "\(parent.redirect)?defaultlogin=true")!))

@@ -130,6 +130,12 @@ public extension LabsPlatform {
     }
 }
 
+extension LabsPlatform {
+    func notifyAnalyticsPushFailed(_ errors: [any Error]) {
+        self.delegate?.labsPlatformAnalytics(pushFailedWithErrors: errors, platform: self)
+    }
+}
+
 // MARK: Network
 extension LabsPlatform.Analytics {
     func submitQueue() async {
@@ -137,21 +143,29 @@ extension LabsPlatform.Analytics {
               !toSubmit.isEmpty else { return }
 
         let statics = toSubmit.map({ StaticAnalyticsTxnDTO(from: $0) })
-        let succeeded = await withTaskGroup(of: StaticAnalyticsTxnDTO?.self) { group in
+        let (succeeded, errors) = await withTaskGroup(of: Result<StaticAnalyticsTxnDTO, any Error>.self) { group in
             for txn in statics {
                 group.addTask {
-                    let success = await self.analyticsPostRequest(txn)
-                    return success ? txn : nil
+                    do {
+                        try await self.analyticsPostRequest(txn)
+                        return .success(txn)
+                    } catch {
+                        return .failure(error)
+                    }
                 }
             }
             
             var success: [StaticAnalyticsTxnDTO] = []
+            var errors: [any Error] = []
             for await res in group {
-                if let res {
-                    success.append(res)
+                switch res {
+                case .success(let txn):
+                    success.append(txn)
+                case .failure(let error):
+                    errors.append(error)
                 }
             }
-            return success
+            return (success, errors)
         }
         
         let intersection = toSubmit.filter { live in
@@ -160,17 +174,24 @@ extension LabsPlatform.Analytics {
         for record in intersection {
             self.modelExecutor.modelContext.delete(record)
         }
+        
+        // Failed submissions stay in the queue and are retried next cycle; report them once per cycle.
+        if !errors.isEmpty, let platform = await LabsPlatform.shared {
+            await platform.notifyAnalyticsPushFailed(errors)
+        }
     }
     
-    // true = successful submission (failed submissions should go back in the queue)
+    // throws on a failed submission (failed submissions should go back in the queue)
     //
     // another design decision: we're only collecting data from logged-in users here,
     // though the analytics engine supports anonymous submissions
     // (from logged in users from some reason)
-    private func analyticsPostRequest(_ txn: StaticAnalyticsTxnDTO) async -> Bool {
-        guard var request = try? await URLRequest(url: self.configuration.endpoint, mode: .accessToken) else {
-            return false
+    private func analyticsPostRequest(_ txn: StaticAnalyticsTxnDTO) async throws {
+        guard let platform = await LabsPlatform.shared else {
+            throw PlatformError.platformNotEnabled
         }
+        // Internal traffic: bypasses the delegate's request hooks, failures are reported via the analytics hook instead.
+        var request = try await platform.authorizedURLRequest(url: self.configuration.endpoint, mode: .accessToken, notifyDelegate: false)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
@@ -178,16 +199,17 @@ extension LabsPlatform.Analytics {
         json.keyEncodingStrategy = .convertToSnakeCase
  
         guard let data = try? json.encode(txn) else {
-            return false
+            throw PlatformAnalyticsError.encodingFailed
         }
         
         request.httpBody = data
         
-        guard let (data, response) = try? await URLSession.shared.data(for: request), let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            return false
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PlatformAnalyticsError.invalidResponse
         }
-        
-        return true
+        guard httpResponse.statusCode == 200 else {
+            throw PlatformAnalyticsError.badStatusCode(httpResponse.statusCode)
+        }
     }
 }

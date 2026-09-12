@@ -78,8 +78,43 @@ Because this library demands OIDC support from the Penn Labs Platform, a client 
     - I decided to not make analytics optional. This is because I wanted the analytics requests to be simple with very little room for failure. If analytics were optional, I would want all analytics functions to throw errors instead of silently failing, which would lead to additional complexity when calling these functions.
 - `clientId: String` and `redirectUrl: String`. These are issued by Platform.
 - `configuration: LabsPlatform.Configuration`. See below.
-- `loginHandler: (Bool) async -> Void`: This function is run on startup and when the login state changes. The boolean argument is `true` when the user is logged in, `false` otherwise.
-- `defaultLoginHandler: () -> Void`: The App Store requires a default login for most apps (for App Store verification purposes). This function will run if the default login credentials are intercepted by the login WebView.
+- `delegate: LabsPlatformDelegate?`: An object that receives auth, request, and analytics events (see below). The platform holds it **weakly**, so keep it alive yourself, e.g. as a `@StateObject` on your root view. It can also be set later via `LabsPlatform.shared?.delegate`.
+
+## The Delegate
+
+`LabsPlatformDelegate` is a `@MainActor` protocol. Every method has a default implementation, so implement only what you need:
+
+```swift
+@MainActor
+final class PlatformEvents: ObservableObject, LabsPlatformDelegate {
+    @Published var loggedIn = false
+    @Published var isDefaultLogin = false
+
+    // Runs on startup (as soon as the delegate is attached) and whenever the login state changes,
+    // including after `LabsPlatform.logoutPlatform()`.
+    func labsPlatformAuth(didUpdateLoggedInState state: (loggedIn: Bool, isDefaultLogin: Bool), platform: LabsPlatform) {
+        loggedIn = state.loggedIn
+        isDefaultLogin = state.isDefaultLogin
+    }
+
+    func labsPlatformAuth(loginFlowFailedWithError error: any Error, platform: LabsPlatform) {
+        print("Login failed: \(error)")
+    }
+}
+```
+
+| Method | When it runs | Return |
+| --- | --- | --- |
+| `labsPlatformAuth(didUpdateLoggedInState:platform:)` | Login state settles (and once on attach). `isDefaultLogin` is `true` for the App Store review login. | – |
+| `labsPlatformAuth(loginFlowFailedWithError:platform:)` | An interactive login fails (cancelling is not a failure). | – |
+| `labsPlatformAuth(didReceiveDefaultLoginCredentials:platform:)` | The login WebView intercepts `Configuration.defaultAccount`/`defaultPassword`. | `true` (default) to accept the default login, `false` to reject it. |
+| `labsPlatformAuth(willPerformRefreshRequest:platform:)` | Right before a token refresh is sent. | – |
+| `labsPlatformAuth(refreshFlowFailedWithError:platform:)` | A token refresh fails. | `.stayLoggedIn`, `.tryAgain` (retried up to `LabsPlatform.maxRefreshAttempts` times), or `.logOut`. Default: `RefreshFlowFailedResult.default(for:)`. |
+| `labsPlatformRequests(willSendRequest:platform:)` | After auth headers are attached to an app request, before it is sent. | The request to send (modify it if you like). |
+| `labsPlatformRequests(didCompleteRequest:result:platform:)` | A request made via `URLSession.data(for:mode:)` finishes. | – |
+| `labsPlatformAnalytics(pushFailedWithErrors:platform:)` | Once per analytics push cycle in which a transaction failed. Failed transactions are retried next cycle. | – |
+
+Library-internal traffic (login, token refresh, analytics) does not go through the request hooks; it has the dedicated auth and analytics hooks above.
 
 
 ## Configuration
@@ -112,11 +147,11 @@ Button {
 }
 ```
 
-When the button is pressed, a WebView sheet should appear, prompting a log-in using the Penn Duo gateway. Note that when the login completes, the WebView sheet will close and the app will run the `loginHandler` function provided in the root view.
+When the button is pressed, a WebView sheet should appear, prompting a log-in using the Penn Duo gateway. Note that when the login completes, the WebView sheet will close and the app's delegate will receive `labsPlatformAuth(didUpdateLoggedInState:platform:)`.
 
-3. Similarly, the `LabsPlatform.shared` object has a logout method `LabsPlatform.logoutPlatform`. You can use this function in a similar manner as above. Akin to `loginWithPlatform`, this function will always run `loginHandler(false)`.
+3. Similarly, the `LabsPlatform.shared` object has a logout method `LabsPlatform.logoutPlatform`. You can use this function in a similar manner as above. Akin to `loginWithPlatform`, this function will always notify the delegate with `loggedIn == false`.
 
-4. The login will be cached and automatically refreshes. Note: if the refresh request fails due to server error, the user will be logged out. However, if the refresh request fails due to network, it is assumed that the refresh token is still valid, so the user will stay logged in, but this network error will be passed to the callee.
+4. The login will be cached and automatically refreshes. By default, if the refresh request fails due to server error, the user will be logged out. However, if the refresh request fails due to network, it is assumed that the refresh token is still valid, so the user will stay logged in. The delegate can override this policy per failure via `labsPlatformAuth(refreshFlowFailedWithError:platform:)`.
 
 ## Network Requests
 
@@ -192,7 +227,19 @@ func getMyIdentity() async -> Identity? {
 }
 ```
 
-These are the only two ways of authenticating a URL request using this Platform library. The design is kept fairly restrictive for two reasons:
+### Method 3: URLSession.data(for:mode:)
+If you want the delegate's request hooks to see the response as well as the request, let the package perform the request:
+
+```swift
+let url = URL(string: "https://platform.pennlabs.org/accounts/me/")!
+let (data, response) = try await URLSession.shared.data(from: url, mode: .accessToken)
+// or, with a fully-configured request:
+let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url), mode: .accessToken)
+```
+
+This authorizes the request, passes it through `labsPlatformRequests(willSendRequest:platform:)`, performs it on the session, and reports the outcome to `labsPlatformRequests(didCompleteRequest:result:platform:)` before returning or rethrowing. Method 1 also runs the `willSendRequest` hook, but since the app sends the request itself the package never sees the response. Method 2 bypasses both hooks because headers are applied at the session level.
+
+These are the only ways of authenticating a URL request using this Platform library. The design is kept fairly restrictive for two reasons:
 1. It *somewhat* protects our API Keys (I actually don't know how but it sounds true), and more importantly;
 2. It encourages our developers to use the async/await philosophy for network requests, which will lead to a more consistent and readable codebase in the future.
 
@@ -225,10 +272,10 @@ Remember that when we initialized our platform object using `enableLabsPlatform`
 
 ```swift
 struct RootView: View {
-    @State var loggedIn = false
+    @StateObject var events = PlatformEvents() // the LabsPlatformDelegate from the Setup section
     var body: some View {
         Group {
-            if !loggedIn {
+            if !events.loggedIn {
                 Button {
                     LabsPlatform.shared?.loginWithPlatform()
                 }
@@ -238,9 +285,8 @@ struct RootView: View {
         }
         .enableLabsPlatform(analyticsRoot: "testing",
                             clientId: "{ID HERE}",
-                            redirectUrl: "{REDIRECT HERE}") { loggedIn in
-            self.loggedIn = loggedIn
-        }
+                            redirectUrl: "{REDIRECT HERE}",
+                            delegate: events)
     }
 }
 

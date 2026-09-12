@@ -19,7 +19,35 @@ public extension URLRequest {
 }
 
 /// Provides a `URLSession` with authenticated header fields depending on the `authenticationMode` (JWT or Legacy).
+///
+/// > Note: Requests sent through a session created this way do not pass through the
+/// > `LabsPlatformDelegate` request hooks, since the headers are applied at the session level.
 public extension URLSession {
+    /// Authorizes `request` with the token type of choice, runs it through the delegate's
+    /// `labsPlatformRequests(willSendRequest:platform:)`, performs it on this session, and reports the outcome to
+    /// `labsPlatformRequests(didCompleteRequest:result:platform:)`.
+    ///
+    /// Throws `PlatformError` if the platform is not enabled or the user is not logged in, otherwise rethrows the transport error.
+    func data(for request: URLRequest, mode: PlatformAuthMode) async throws -> (Data, URLResponse) {
+        guard let platform = await LabsPlatform.shared else {
+            throw PlatformError.platformNotEnabled
+        }
+        let authorized = try await platform.authorizedURLRequest(request, mode: mode)
+        do {
+            let result = try await self.data(for: authorized)
+            await platform.notifyRequestCompleted(authorized, result: .success(result))
+            return result
+        } catch {
+            await platform.notifyRequestCompleted(authorized, result: .failure(error))
+            throw error
+        }
+    }
+    
+    /// Convenience for `data(for:mode:)` with a plain GET of `url`.
+    func data(from url: URL, mode: PlatformAuthMode) async throws -> (Data, URLResponse) {
+        try await data(for: URLRequest(url: url), mode: mode)
+    }
+
     convenience init(authenticationMode: PlatformAuthMode, config: URLSessionConfiguration = .default) async throws {
         guard let platform = await LabsPlatform.shared else {
             throw PlatformError.platformNotEnabled
@@ -52,13 +80,12 @@ public extension URLSession {
 extension LabsPlatform {
     
     /// Applies the `Authorization` and `X-Authorization` headers with the token type of choice (JWT or legacy access token)
-    func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode) async throws -> URLRequest {
-        guard let platform = await LabsPlatform.shared else {
-            throw PlatformError.platformNotEnabled
-        }
-        
+    ///
+    /// - Parameter notifyDelegate: when `true` (app-originated requests), the result is passed through the delegate's
+    ///   `labsPlatformRequests(willSendRequest:platform:)`. Library-internal traffic passes `false`.
+    func authorizedURLRequest(_ request: URLRequest, mode: PlatformAuthMode, notifyDelegate: Bool = true) async throws -> URLRequest {
         // Wait for an existing refresh operation to finish.
-        let authState = await platform.getRefreshedAuthState()
+        let authState = await self.getRefreshedAuthState()
         
         guard case .loggedIn(let auth) = authState else {
             throw PlatformError.notLoggedIn
@@ -78,11 +105,19 @@ extension LabsPlatform {
             break
         }
         
+        if notifyDelegate, let delegate = self.delegate {
+            newRequest = delegate.labsPlatformRequests(willSendRequest: newRequest, platform: self)
+        }
+        
         return newRequest
     }
     
-    func authorizedURLRequest(url: URL, mode: PlatformAuthMode) async throws -> URLRequest {
-        return try await authorizedURLRequest(URLRequest(url: url), mode: mode)
+    func notifyRequestCompleted(_ request: URLRequest, result: Result<(Data, URLResponse), any Error>) {
+        self.delegate?.labsPlatformRequests(didCompleteRequest: request, result: result, platform: self)
+    }
+    
+    func authorizedURLRequest(url: URL, mode: PlatformAuthMode, notifyDelegate: Bool = true) async throws -> URLRequest {
+        return try await authorizedURLRequest(URLRequest(url: url), mode: mode, notifyDelegate: notifyDelegate)
     }
 }
 
