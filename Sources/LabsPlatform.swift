@@ -192,6 +192,7 @@ struct PlatformProvider<Content: View>: View {
                     .cornerRadius(16)
             }
         }
+            .environmentObject(platform)
             .environment(\.labsAnalyticsPath, analyticsRoot)
             .onChange(of: scenePhase) {
                 Task {
@@ -225,7 +226,8 @@ public extension View {
     /// To receive events, assign a [`LabsPlatformDelegate`](x-source-tag://LabsPlatformDelegate) to `LabsPlatform.shared?.delegate`
     /// outside of a view context, or use `LabsPlatform.initialize(...)` with [`attachLabsPlatform(analyticsRoot:)`](x-source-tag://attachLabsPlatform).
     ///
-    /// - Returns: The original view with a `LabsPlatform.Analytics` environment object. The  `LabsPlatform` instance can be accessed as a singleton: `LabsPlatform.shared`, though this is not recommended except for cases when logging in or out.
+    /// - Returns: The original view with the `LabsPlatform` instance available to all subviews as an environment object
+    ///   (`@EnvironmentObject var platform: LabsPlatform`). Prefer this over the `LabsPlatform.shared` singleton in views.
     /// - Tag: enableLabsPlatform
     @MainActor func enableLabsPlatform(analyticsRoot: String, clientId: String, redirectUrl: String, configuration: LabsPlatform.Configuration = LabsPlatform.Configuration()) -> some View {
         if let shared = LabsPlatform.shared {
@@ -241,6 +243,7 @@ public extension View {
 
     /// Attaches the existing `LabsPlatform.shared` to this view and all subviews without creating a new instance.
     /// Requires a prior `LabsPlatform.initialize(...)`; otherwise this is a fatal error.
+    /// Subviews can read the instance with `@EnvironmentObject var platform: LabsPlatform`.
     ///
     /// - Parameter analyticsRoot: The root keypath for analytics tokens, placed in the environment for child views.
     /// - Tag: attachLabsPlatform
