@@ -36,6 +36,16 @@ final class LabsPlatformDelegateTests: XCTestCase {
     private let expiredCredential = PlatformAuthCredentials(
         accessToken: "access", expiresIn: 1, tokenType: "Bearer", refreshToken: "refresh", idToken: nil, issuedAt: .distantPast)
 
+    // MARK: Initialization
+
+    func testInitializeSetsShared() {
+        LabsPlatform.shared = nil
+        let platform = LabsPlatform.initialize(clientId: "test", redirectUrl: "labs://test",
+                                               configuration: .init(authEndpoint: Self.refused, tokenEndpoint: Self.refused, analyticsConfiguration: nil))
+        XCTAssertTrue(LabsPlatform.shared === platform)
+        XCTAssertFalse(platform.createdByViewModifier)
+    }
+
     // MARK: Policies
 
     func testDefaultRefreshPolicy() {

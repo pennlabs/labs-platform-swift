@@ -73,12 +73,19 @@ Because this library demands OIDC support from the Penn Labs Platform, a client 
 
 ## Setup
 
-1. With a new project, add the `.enableLabsPlatform` modifier to the root view. You will need to provide a few details.
+1. With a new project, initialize Labs Platform once and attach it to the root view. There are two equivalent ways to do this:
+- **Modifier only**: add the `.enableLabsPlatform` modifier to the root view. It creates the `LabsPlatform` instance the first time it runs and simply reuses it if SwiftUI re-evaluates that view.
+- **Initialize, then attach**: call `LabsPlatform.initialize(clientId:redirectUrl:configuration:)` early (for example in your `App` initializer), then add `.attachLabsPlatform(analyticsRoot:)` to the root view. `initialize` returns the instance (also available as `LabsPlatform.shared`), so you can assign the delegate right away: `LabsPlatform.initialize(...).delegate = events`. This is the recommended path when you use a delegate.
+
+Initialize exactly once. Calling `LabsPlatform.initialize` twice, or using `.enableLabsPlatform` after `LabsPlatform.initialize`, is a fatal error, as is `.attachLabsPlatform` before any initialization.
+
+Both paths take the following details (`.attachLabsPlatform` takes only `analyticsRoot`):
 - `analyticsRoot: String`: The root keypath for analytics tokens. For example, in Penn Mobile, all analytics values will look like `pennmobile.{FEATURE}.{SUBFEATURE}`. In that case, the `analyticsRoot = "pennmobile"`.
     - I decided to not make analytics optional. This is because I wanted the analytics requests to be simple with very little room for failure. If analytics were optional, I would want all analytics functions to throw errors instead of silently failing, which would lead to additional complexity when calling these functions.
 - `clientId: String` and `redirectUrl: String`. These are issued by Platform.
 - `configuration: LabsPlatform.Configuration`. See below.
-- `delegate: LabsPlatformDelegate?`: An object that receives auth, request, and analytics events (see below). The platform holds it **weakly**, so keep it alive yourself, e.g. as a `@StateObject` on your root view. It is attached when the root view appears, and can also be set later via `LabsPlatform.shared?.delegate`.
+
+2. To receive auth, request, and analytics events, assign a `LabsPlatformDelegate` (see below) to `LabsPlatform.delegate`. The view modifiers do not take a delegate; set it outside of a view context, e.g. on the value returned by `LabsPlatform.initialize` or via `LabsPlatform.shared?.delegate`. The platform holds it **weakly**, so keep it alive yourself. Assigning it immediately reports the current login state.
 
 ## The Delegate
 
@@ -270,28 +277,40 @@ Given an analytics key: `pennmobile.dining.kcech.breakfast.appear`, it is easy t
 The SwiftUI analytics logging aspect of this package was designed with that philosophy in mind.
 
 #### View-Based Logging
-Remember that when we initialized our platform object using `enableLabsPlatform`, we provided an `analyticsRoot`. This (under the hood) placed that key in the environment for children views. Consider the following SwiftUI code:
+Remember that when we attached our platform object using `enableLabsPlatform` (or `attachLabsPlatform`), we provided an `analyticsRoot`. This (under the hood) placed that key in the environment for children views. Consider the following SwiftUI code:
 
 ```swift
-struct RootView: View {
-    @StateObject var events = PlatformEvents() // the LabsPlatformDelegate from the Setup section
-    var body: some View {
-        Group {
-            if !events.loggedIn {
-                Button {
-                    LabsPlatform.shared?.loginWithPlatform()
-                }
-            } else {
-                ChildView()
-            }
+@main
+struct MyApp: App {
+    @StateObject var events: PlatformEvents // the LabsPlatformDelegate from the Setup section
+
+    init() {
+        let events = PlatformEvents()
+        LabsPlatform.initialize(clientId: "{ID HERE}", redirectUrl: "{REDIRECT HERE}").delegate = events
+        _events = StateObject(wrappedValue: events)
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            RootView()
+                .environmentObject(events)
+                .attachLabsPlatform(analyticsRoot: "testing")
         }
-        .enableLabsPlatform(analyticsRoot: "testing",
-                            clientId: "{ID HERE}",
-                            redirectUrl: "{REDIRECT HERE}",
-                            delegate: events)
     }
 }
 
+struct RootView: View {
+    @EnvironmentObject var events: PlatformEvents
+    var body: some View {
+        if !events.loggedIn {
+            Button {
+                LabsPlatform.shared?.loginWithPlatform()
+            }
+        } else {
+            ChildView()
+        }
+    }
+}
 ```
 
 We can understand that this view prompts the user to log in if they are not logged in. If they are logged in, it shows `ChildView`. There are many use cases where we would like to have a specific analytics keypath for child view (say, if we instead presented a navigation stack where each screen would have its own keypath).
@@ -501,7 +520,7 @@ There are some properties in Analytics that can be configured when LabsPlatformS
 
 The first property that can be modified is the push URL. This allows for testing analytics using a local server or a server other than the production server.
 
-As for regular use cases, the analytics values are kept in a queue, which is flushed, by default, every 15 seconds. This can be modified by changing the static property: `pushInterval`. Note that this property should be changed before `enableLabsPlatform` is run, since initializing Platform starts the DispatchQueue on a set interval (which cannot then be changed).
+As for regular use cases, the analytics values are kept in a queue, which is flushed, by default, every 15 seconds. This can be modified by changing the static property: `pushInterval`. Note that this property should be changed before `enableLabsPlatform` or `LabsPlatform.initialize` is run, since initializing Platform starts the DispatchQueue on a set interval (which cannot then be changed).
 
 There is also a property called `bufferTime`, which defaults to 5 seconds. This buffer will not let analytics values within that time to be recorded. This is especially important for expensive geometric appearance calculation, where a user scrolling repeatedly would trigger many analytics values to be sent.
 
@@ -509,7 +528,7 @@ Another property that can be changed is `expireInterval`. By default, this value
 
 Various endpoints can also be changed throughout the library.
 
-All values should be changed prior to running `enableLabsPlatform`, since some values (like `pushInterval` or `expireInterval`) are relevant as the `LabsPlatform` object is being initialized. That is, these values should be changed in the initializer for whichever struct/class is running `enableLabsPlatform`.
+All values should be changed prior to running `enableLabsPlatform` or `LabsPlatform.initialize`, since some values (like `pushInterval` or `expireInterval`) are relevant as the `LabsPlatform` object is being initialized. That is, these values should be changed in the initializer for whichever struct/class is running `enableLabsPlatform` or `LabsPlatform.initialize`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
