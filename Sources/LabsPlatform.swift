@@ -37,9 +37,7 @@ public final class LabsPlatform: ObservableObject {
     public private(set) static var shared: LabsPlatform?
 
     @Published var analytics: Analytics?
-    @Published var authState: PlatformAuthState = .idle {
-        didSet { authStateDidChange(from: oldValue) }
-    }
+    @Published var authState: PlatformAuthState = .idle
     @Published var globalLoading = false
 
     let clientId: String
@@ -187,6 +185,9 @@ struct PlatformProvider<Content: View>: View {
                 if let delegate {
                     platform.delegate = delegate
                 }
+            }
+            .onChange(of: platform.authState) {
+                authStateDidChange(from: oldValue)
             }
         }
 }
